@@ -5,7 +5,6 @@ import {
     Pin, PinOff, GripVertical, Calendar, ChevronDown,
 } from 'lucide-vue-next';
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue';
-import ChatBox from '@/components/ChatBox.vue';
 import { Button } from '@/components/ui/button';
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -66,8 +65,7 @@ const authUser = page.props.auth.user as { id: number; name: string };
 const projects = ref(pageProps.projects);
 const unassignedTasks = ref(pageProps.unassignedTasks);
 const notesMap = ref(pageProps.notes || {});
-const messagesMap = ref(pageProps.messages || {});
-const optimisticMessages = ref<MessageData[]>([]);
+
 
 const dragId = ref<number | null>(null);
 const filterTab = ref('all');
@@ -143,44 +141,6 @@ const showNewNote = ref(false);
 const showNotesSection = ref(true);
 const showPrioritySection = ref(true);
 
-const chatContacts = computed(() =>
-    activeProject.value?.members?.filter(m => m.user_id !== authUser.id) || [],
-);
-
-const allMessages = computed(() => {
-    const server = messagesMap.value[String(activeProjectTab.value ?? '')] || [];
-    const serverIds = new Set(server.map(m => m.id));
-    const local = optimisticMessages.value.filter(m => !serverIds.has(m.id));
-
-    return [...server, ...local];
-});
-
-function sendMessage(text: string) {
-    if (!text.trim() || !activeProjectTab.value) {
-return;
-}
-
-    const pid = activeProjectTab.value;
-    const tempId = -(Date.now() + Math.random());
-    optimisticMessages.value.push({
-        id: tempId, project_id: pid, user_id: authUser.id,
-        content: text, created_at: new Date().toISOString(),
-        user: { id: authUser.id, name: authUser.name, email: '' },
-    });
-    const csrfMatch = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
-    fetch('/messages', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-XSRF-TOKEN': csrfMatch ? decodeURIComponent(csrfMatch[1]) : '',
-        },
-        body: JSON.stringify({ project_id: pid, content: text }),
-    }).catch(() => {
-        optimisticMessages.value = optimisticMessages.value.filter(m => m.id !== tempId);
-    });
-}
-
 function isActive(user: { last_active_at?: string | null }): boolean {
     if (!user.last_active_at) {
 return false;
@@ -195,7 +155,7 @@ let pollInterval: ReturnType<typeof setInterval>;
 
 onMounted(() => {
     pollInterval = setInterval(() => {
-        router.reload({ only: ['projects', 'unassignedTasks', 'notes', 'messages'] });
+        router.reload({ only: ['projects', 'unassignedTasks', 'notes'] });
     }, 2000);
 });
 
@@ -206,13 +166,12 @@ clearInterval(pollInterval);
 });
 
 watch(
-    () => [page.props.projects, page.props.unassignedTasks, page.props.notes, page.props.messages],
-    ([newProjects, newTasks, newNotes, newMessages]) => {
+    () => [page.props.projects, page.props.unassignedTasks, page.props.notes],
+    ([newProjects, newTasks, newNotes]) => {
         const p = newProjects as ProjectData[];
         projects.value = p;
         unassignedTasks.value = newTasks as TaskItemData[];
         notesMap.value = (newNotes as Record<string, NoteData[]>) || {};
-        messagesMap.value = (newMessages as Record<string, MessageData[]>) || {};
 
         if (!activeProjectTab.value || !p.some((proj) => proj.id === activeProjectTab.value)) {
             activeProjectTab.value = p[0]?.id ?? null;
@@ -772,13 +731,6 @@ return;
                         </div>
                     </div>
 
-                    <ChatBox
-                        :messages="allMessages"
-                        :contacts="chatContacts"
-                        :current-user-id="authUser.id"
-                        :active-project-title="activeProject?.title"
-                        @send="sendMessage"
-                    />
                 </aside>
             </div>
         </main>
@@ -807,13 +759,6 @@ return;
                     <span v-if="member.user_id === authUser.id" class="text-[9px] font-semibold text-[#2563EB]">YOU</span>
                 </div>
             </div>
-            <ChatBox
-                :messages="allMessages"
-                :contacts="chatContacts"
-                :current-user-id="authUser.id"
-                :active-project-title="activeProject?.title"
-                @send="sendMessage"
-            />
         </aside>
 
         <!-- CONTENT -->

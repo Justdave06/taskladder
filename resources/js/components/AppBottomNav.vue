@@ -18,6 +18,7 @@ const navItems = [
     { label: 'Bulletin', href: '/bulletin', icon: MessageSquareText },
     { label: 'Desk', href: '/board', icon: LayoutDashboard },
     { label: 'Task', href: '/tasks', icon: ListChecks },
+    { label: 'Messages', href: '/messages', icon: MessageSquareText },
     { label: 'Manage', href: '/manage', icon: Settings },
     { label: 'Notifi.', href: '/notifications', icon: Bell },
     { label: 'Me', href: '/settings/profile', icon: User },

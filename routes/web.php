@@ -12,6 +12,7 @@ use App\Http\Controllers\TeamController;
 use App\Models\Project;
 use App\Models\ProjectMember;
 use App\Models\TaskItem;
+use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use Laravel\Fortify\Features;
@@ -84,8 +85,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::patch('manage/members/{member}/role', [ManageController::class, 'assignRole'])->name('manage.members.role');
 
     // Messages
-    Route::get('messages/{project}', [MessageController::class, 'index'])->name('messages.index');
+    Route::get('messages', [MessageController::class, 'globalIndex'])->name('messages.global');
     Route::post('messages', [MessageController::class, 'store'])->name('messages.store');
+    Route::patch('messages/{message}', [MessageController::class, 'update'])->name('messages.update');
+    Route::delete('messages/{message}', [MessageController::class, 'destroy'])->name('messages.destroy');
+    Route::post('messages/attachments', [MessageController::class, 'uploadAttachment'])->name('messages.attachments.upload');
+    Route::post('messages/typing', [MessageController::class, 'typing'])->name('messages.typing');
+    Route::get('messages/attachments/{attachment}/download', [MessageController::class, 'downloadAttachment'])->name('messages.attachments.download');
+    Route::post('messages/{message}/reactions', [MessageController::class, 'toggleReaction'])->name('messages.reactions.toggle');
+    Route::post('calls/signal', [MessageController::class, 'callSignal'])->name('calls.signal');
+    Route::post('calls/missed', [MessageController::class, 'missedCall'])->name('calls.missed');
 
     // Bulletin
     Route::get('bulletin', [BulletinController::class, 'index'])->name('bulletin');
@@ -117,6 +126,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::post('projects/members/{member}/tasks', [TaskItemController::class, 'store'])->name('projects.members.tasks.store');
     Route::patch('tasks/{task}', [TaskItemController::class, 'update'])->name('tasks.update');
+
+    // Broadcasting auth
+    Broadcast::routes();
 });
 
 require __DIR__.'/settings.php';
