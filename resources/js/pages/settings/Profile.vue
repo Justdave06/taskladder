@@ -30,7 +30,14 @@ interface RecentTask {
 }
 
 const page = usePage();
-const authUser = page.props.auth.user as { id: number; name: string; email: string };
+const authUser = page.props.auth.user as { id: number; name: string; email: string; is_superadmin: boolean; is_company_admin: boolean };
+
+const displayRole = computed(() => {
+    if (authUser.is_superadmin) return 'Superadmin';
+    if (authUser.is_company_admin) return 'Company Owner';
+    if (isBoss.value) return 'Admin';
+    return currentMember.value?.role || 'Member';
+});
 
 const props = defineProps<{
     mustVerifyEmail: boolean;
@@ -120,8 +127,8 @@ const priorityLabels: Record<string, string> = {
                         <div class="flex items-center gap-2 text-sm text-[#5A6278]">
                             <Mail class="h-3.5 w-3.5" /> {{ authUser.email }}
                         </div>
-                        <div v-if="currentMember" class="mt-0.5 text-xs text-[#2563EB] font-medium">
-                            {{ isBoss ? 'Admin' : (currentMember.role || 'Member') }}
+                        <div class="mt-0.5 text-xs text-[#2563EB] font-medium">
+                            {{ displayRole }}
                         </div>
                     </div>
                 </div>
@@ -179,7 +186,7 @@ const priorityLabels: Record<string, string> = {
                 <div class="space-y-3 text-xs text-[#5A6278]">
                     <div class="flex items-center gap-3">
                         <UserIcon class="h-4 w-4 text-[#2563EB]" />
-                        <span><strong class="text-[#0F1623]">Role:</strong> {{ isBoss ? 'Administrator' : (currentMember?.role || 'Member') }}</span>
+                        <span><strong class="text-[#0F1623]">Role:</strong> {{ displayRole }}</span>
                     </div>
                     <div class="flex items-center gap-3">
                         <Mail class="h-4 w-4 text-[#2563EB]" />

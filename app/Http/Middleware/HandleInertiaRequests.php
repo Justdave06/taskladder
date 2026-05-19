@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\CompanyConnection;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -35,6 +36,14 @@ class HandleInertiaRequests extends Middleware
      */
     public function share(Request $request): array
     {
+        $pendingConnectCount = 0;
+        $userCompanyId = $request->user()?->company_id;
+        if ($userCompanyId) {
+            $pendingConnectCount = CompanyConnection::where('to_company_id', $userCompanyId)
+                ->where('status', 'pending')
+                ->count();
+        }
+
         return [
             ...parent::share($request),
             'name' => config('app.name'),
@@ -43,6 +52,7 @@ class HandleInertiaRequests extends Middleware
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
             'unreadNotificationsCount' => $request->user()?->unreadNotifications()->count() ?? 0,
+            'pendingConnectRequests' => $pendingConnectCount,
             'csrf_token' => csrf_token(),
         ];
     }

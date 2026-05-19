@@ -17,18 +17,31 @@ class TeamController extends Controller
     {
         $user = $request->user();
 
-        $projects = Project::where('created_by', $user->id)
-            ->orWhereHas('members', fn ($q) => $q->where('user_id', $user->id))
-            ->with(['members' => function ($q) {
-                $q->with('user');
-            }, 'creator'])
-            ->get();
+        $projects = Project::where(function ($q) use ($user) {
+            $q->where('created_by', $user->id)
+              ->orWhereHas('members', fn ($q2) => $q2->where('user_id', $user->id));
+        });
+        if (!$user->is_superadmin) {
+            $projects->where('company_id', $user->company_id);
+        }
+        $projects = $projects->with(['members' => function ($q) {
+            $q->with('user');
+        }, 'creator'])->get();
 
-        $allUsers = User::all(['id', 'name', 'email']);
+        $allUsers = User::query();
+        if (!$user->is_superadmin) {
+            $allUsers->where('company_id', $user->company_id);
+        }
+
+        $allRoles = \App\Models\Role::query();
+        if (!$user->is_superadmin) {
+            $allRoles->where('company_id', $user->company_id);
+        }
 
         return Inertia::render('taskladder/Team/Index', [
             'projects' => $projects,
-            'allUsers' => $allUsers,
+            'allUsers' => $allUsers->get(['id', 'name', 'email']),
+            'allRoles' => $allRoles->get(),
         ]);
     }
 

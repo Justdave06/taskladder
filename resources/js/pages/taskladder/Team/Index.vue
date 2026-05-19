@@ -51,9 +51,15 @@ interface AppUser {
     email: string;
 }
 
+interface RoleData {
+    id: number;
+    name: string;
+}
+
 const props = defineProps<{
     projects: ProjectData[];
     allUsers: AppUser[];
+    allRoles: RoleData[];
 }>();
 
 const showInviteDialog = ref(false);
@@ -159,16 +165,6 @@ function removeMember(memberId: number) {
                                 <div class="text-xs text-muted-foreground">{{ member.user.email }}</div>
                             </div>
                             <div class="flex items-center gap-2">
-                                <input
-                                    v-if="member.role !== 'creator'"
-                                    :value="member.role || ''"
-                                    class="w-28 rounded-md border px-2 py-1 text-xs"
-                                    placeholder="Role"
-                                    @change="(e) => updateMemberRole(member.id, (e.target as HTMLInputElement).value)"
-                                />
-                                <Badge :variant="statusVariants[member.status] ?? 'secondary'">
-                                    {{ member.status }}
-                                </Badge>
                                 <button
                                     class="text-muted-foreground hover:text-red-500"
                                     @click="removeMember(member.id)"
@@ -218,7 +214,13 @@ function removeMember(memberId: number) {
                     </div>
                     <div>
                         <Label>Role</Label>
-                        <Input v-model="inviteForm.role" placeholder="e.g. Developer, Designer" />
+                        <select
+                            v-model="inviteForm.role"
+                            class="flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-blue-400"
+                        >
+                            <option value="">No role</option>
+                            <option v-for="r in allRoles" :key="r.id" :value="r.name">{{ r.name }}</option>
+                        </select>
                     </div>
                     <Button :disabled="!inviteForm.project_id || !inviteForm.user_id" @click="sendInvite">
                         Send Invitation

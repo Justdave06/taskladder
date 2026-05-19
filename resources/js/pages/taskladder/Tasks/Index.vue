@@ -2,7 +2,7 @@
 import { Head, router, Link, usePage } from '@inertiajs/vue3';
 import {
     Plus, X, Circle, FileText, FileSpreadsheet, File, Search, Upload,
-    Pin, PinOff, GripVertical, Calendar, ChevronDown,
+    Pin, PinOff, GripVertical, Calendar, ChevronDown, Check, Eye,
 } from 'lucide-vue-next';
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue';
 import { Button } from '@/components/ui/button';
@@ -28,9 +28,11 @@ interface MessageData {
 interface TaskItemData {
     id: number; title: string; description: string | null;
     deadline: string | null; priority: string; file_type: string | null;
+    file_name: string | null; member_note: string | null;
     project_id: number; project_member_id: number | null;
     status: string; pinned: boolean;
     checklist_items: ChecklistItem[]; file_path: string | null;
+    file_url: string | null; updated_at: string;
     project_member: { id: number; user_id: number; user: { id: number; name: string; email: string } } | null;
     creator: { id: number; name: string } | null;
 }
@@ -43,7 +45,7 @@ interface Member {
 }
 
 interface RoleData {
-    id: number; project_id: number; name: string;
+    id: number; project_id: number | null; name: string;
 }
 
 interface ProjectData {
@@ -56,6 +58,7 @@ interface PageProps {
     projects: ProjectData[]; unassignedTasks: TaskItemData[];
     notes: Record<string, NoteData[]>;
     messages: Record<string, MessageData[]>;
+    allRoles: RoleData[];
 }
 
 const page = usePage();
@@ -214,7 +217,15 @@ const currentMember = computed(() =>
 );
 
 const myTasks = computed(() =>
-    (currentMember.value?.task_items || []).filter((t) => t.status === 'accepted' || t.status === 'completed'),
+    (currentMember.value?.task_items || []).filter((t) => t.status === 'accepted'),
+);
+
+const memberProjects = computed(() =>
+    projects.value.filter(p => p.members.some(m => m.user_id === authUser.id)),
+);
+
+const completedTasks = computed(() =>
+    (currentMember.value?.task_items || []).filter((t) => t.status === 'completed'),
 );
 
 const doneToday = computed(() =>
@@ -222,38 +233,24 @@ const doneToday = computed(() =>
 );
 
 const activeProgTab = ref(0);
-const activeViewTab = ref<'mine' | 'all'>('mine');
+const activeViewTab = ref<'mine'>('mine');
 
 function canMarkDone(task: TaskItemData): boolean {
     return task.checklist_items.length === 0 || task.checklist_items.every((i) => i.is_completed);
 }
 
 const memberViewTasks = computed(() => {
-    if (!activeProject.value) {
-return [];
-}
-
-    if (activeViewTab.value === 'all') {
-        return activeProject.value.members.flatMap((m) => m.task_items);
-    }
-
+    if (!activeProject.value) return [];
     return myTasks.value;
 });
 
 const fileAcceptAttr = computed(() => {
     const t = createForm.value.file_type;
 
-    if (t === 'DOC') {
-return '.doc,.docx,.DOC,.DOCX';
-}
-
-    if (t === 'PDF') {
-return '.pdf,.PDF';
-}
-
-    if (t === 'XLS') {
-return '.xls,.xlsx,.XLS,.XLSX';
-}
+    if (t === 'DOC') return '.doc,.docx,.DOC,.DOCX';
+    if (t === 'PDF') return '.pdf,.PDF';
+    if (t === 'XLS') return '.xls,.xlsx,.XLS,.XLSX';
+    if (t === 'IMAGE') return '.jpg,.jpeg,.png,.gif,.webp,.JPG,.JPEG,.PNG,.GIF,.WEBP';
 
     return '*/*';
 });
@@ -275,26 +272,39 @@ return;
 }
 
 function isCurrentUser(member: Member) {
- return member.user_id === authUser.id; 
+  return member.user_id === authUser.id; 
+}
+
+function memberForTask(task: TaskItemData): Member | null {
+    if (!task.project_member || !activeProject.value) return null;
+    return activeProject.value.members.find(m => m.user_id === task.project_member!.user_id) || null;
+}
+
+function taskMemberRole(task: TaskItemData): string {
+    const m = memberForTask(task);
+    if (!m) return 'Member';
+    return pageProps.allRoles?.find(r => r.id === m.role_id)?.name || m.role || 'Member';
 }
 function isMemberActive(member: Member) {
  return member.status === 'accepted' || member.status === 'completed'; 
 }
 
 function fileIcon(type: string | null) {
-    if (type === 'DOC') {
-return FileText;
-}
-
-    if (type === 'PDF') {
-return File;
-}
-
-    if (type === 'XLS') {
-return FileSpreadsheet;
-}
-
+    if (type === 'DOC') return FileText;
+    if (type === 'PDF') return File;
+    if (type === 'XLS') return FileSpreadsheet;
     return null;
+}
+
+function fileUrl(task: TaskItemData): string | null {
+    return task.file_url || (task.file_path ? '/storage/' + task.file_path : null);
+}
+
+function isImageFile(task: TaskItemData): boolean {
+    if (task.file_type === 'IMAGE') return true;
+    const url = fileUrl(task);
+    if (!url) return false;
+    return /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);
 }
 
 const tabStyles: Record<string, { active: string; inactive: string }> = {
@@ -302,6 +312,7 @@ const tabStyles: Record<string, { active: string; inactive: string }> = {
     DOC: { active: 'bg-blue-600 text-white', inactive: 'bg-blue-50 text-blue-600 hover:bg-blue-100' },
     PDF: { active: 'bg-red-600 text-white', inactive: 'bg-red-50 text-red-600 hover:bg-red-100' },
     XLS: { active: 'bg-green-600 text-white', inactive: 'bg-green-50 text-green-600 hover:bg-green-100' },
+    IMAGE: { active: 'bg-purple-600 text-white', inactive: 'bg-purple-50 text-purple-600 hover:bg-purple-100' },
 };
 
 function onDragStart(taskId: number) {
@@ -354,6 +365,23 @@ function toggleChecklist(item: ChecklistItem) {
     router.patch(`/checklist-items/${item.id}`, { is_completed: !item.is_completed }, { preserveScroll: true });
 }
 
+const memberNoteTimers: Record<number, ReturnType<typeof setTimeout>> = {};
+
+function saveMemberNote(task: TaskItemData) {
+    if (memberNoteTimers[task.id]) clearTimeout(memberNoteTimers[task.id]);
+    memberNoteTimers[task.id] = setTimeout(() => {
+        router.patch(`/tasks/${task.id}`, { member_note: task.member_note || '' }, { preserveScroll: true, preserveState: true });
+    }, 600);
+}
+
+const expandedTasks = ref<Set<number>>(new Set());
+
+function toggleExpand(taskId: number) {
+    const s = new Set(expandedTasks.value);
+    if (s.has(taskId)) s.delete(taskId); else s.add(taskId);
+    expandedTasks.value = s;
+}
+
 function handleFileChange(e: Event) {
     const input = e.target as HTMLInputElement;
 
@@ -382,6 +410,12 @@ return;
  return alert('Only XLS/XLSX files allowed.'); 
 }
 
+    if (createForm.value.file_type === 'IMAGE' && !/\.(jpg|jpeg|png|gif|webp)$/i.test(name)) {
+ input.value = '';
+
+ return alert('Only JPG/PNG/GIF/WEBP images allowed.'); 
+}
+
     selectedFile.value = file;
 
     if (name.endsWith('.doc') || name.endsWith('.docx')) {
@@ -390,6 +424,8 @@ createForm.value.file_type = 'DOC';
 createForm.value.file_type = 'PDF';
 } else if (name.endsWith('.xls') || name.endsWith('.xlsx')) {
 createForm.value.file_type = 'XLS';
+} else if (/\.(jpg|jpeg|png|gif|webp)$/i.test(name)) {
+createForm.value.file_type = 'IMAGE';
 }
 }
 
@@ -545,7 +581,7 @@ return;
 
             <!-- Filter pills -->
             <div class="flex items-center gap-0.5 border-b border-[#E4E7F0] px-3 py-2.5">
-                <button v-for="tab in ['all', 'DOC', 'PDF', 'XLS']" :key="tab" class="rounded-md px-2 py-1 text-[11px] font-medium transition-colors" :class="filterTab === tab ? tabStyles[tab].active : tabStyles[tab].inactive" @click="filterTab = tab">
+                <button v-for="tab in ['all', 'DOC', 'PDF', 'XLS', 'IMAGE']" :key="tab" class="rounded-md px-2 py-1 text-[11px] font-medium transition-colors" :class="filterTab === tab ? tabStyles[tab].active : tabStyles[tab].inactive" @click="filterTab = tab">
                     {{ tab === 'all' ? 'All' : tab }}
                 </button>
                 <Search class="ml-auto h-4 w-4 text-[#9BA3B8]" />
@@ -595,7 +631,7 @@ return;
             <!-- Search + filter row (mobile) -->
             <div class="flex items-center gap-2 border-b border-[#E4E7F0] bg-white px-4 py-2.5 lg:hidden">
                 <div class="flex gap-1">
-                    <button v-for="tab in ['all', 'DOC', 'PDF', 'XLS']" :key="tab" class="rounded-md px-2 py-1 text-[11px] font-medium transition-colors" :class="filterTab === tab ? tabStyles[tab].active : tabStyles[tab].inactive" @click="filterTab = tab">
+                <button v-for="tab in ['all', 'DOC', 'PDF', 'XLS', 'IMAGE']" :key="tab" class="rounded-md px-2 py-1 text-[11px] font-medium transition-colors" :class="filterTab === tab ? tabStyles[tab].active : tabStyles[tab].inactive" @click="filterTab = tab">
                         {{ tab === 'all' ? 'All' : tab }}
                     </button>
                 </div>
@@ -633,7 +669,7 @@ return;
                                         <span class="absolute bottom-0.5 right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-green-500" />
                                     </div>
                                     <div class="text-[12px] font-semibold text-[#0F1623]">{{ member.user.name }}</div>
-                                    <div class="text-[10px] text-[#9BA3B8]">{{ (activeProject?.roles?.find(r => r.id === member.role_id)?.name) || member.role || 'Member' }}</div>
+                                    <div class="text-[10px] text-[#9BA3B8]">{{ (pageProps.allRoles?.find(r => r.id === member.role_id)?.name) || member.role || 'Member' }}</div>
                                     <div class="mt-1 text-[10px] font-medium text-[#2563EB]">
                                         Tasks: <span class="font-semibold">{{ member.task_items?.length || 0 }}</span>
                                     </div>
@@ -754,7 +790,7 @@ return;
                     </div>
                     <div class="min-w-0 flex-1">
                         <div class="text-[12px] font-medium text-[#0F1623] truncate">{{ member.user.name }}</div>
-                        <div class="text-[10px] text-[#9BA3B8]">{{ (activeProject?.roles?.find(r => r.id === member.role_id)?.name) || member.role || 'Member' }}</div>
+                        <div class="text-[10px] text-[#9BA3B8]">{{ (pageProps.allRoles?.find(r => r.id === member.role_id)?.name) || member.role || 'Member' }}</div>
                     </div>
                     <span v-if="member.user_id === authUser.id" class="text-[9px] font-semibold text-[#2563EB]">YOU</span>
                 </div>
@@ -763,66 +799,127 @@ return;
 
         <!-- CONTENT -->
         <main class="flex flex-1 flex-col overflow-hidden bg-[#F7F8FC]">
-            <!-- Task tabs -->
-            <div class="flex items-center gap-3 border-b border-[#E4E7F0] bg-white px-4 py-3">
-                <button class="rounded-full px-4 py-1.5 text-[12px] font-medium transition-all" :class="activeViewTab === 'mine' ? 'bg-[#0F1623] text-white' : 'text-[#9BA3B8] hover:text-[#5A6278]'" @click="activeViewTab = 'mine'">My Tasks ({{ myTasks.length }})</button>
-                <button class="rounded-full px-4 py-1.5 text-[12px] font-medium transition-all" :class="activeViewTab === 'all' ? 'bg-[#0F1623] text-white' : 'text-[#9BA3B8] hover:text-[#5A6278]'" @click="activeViewTab = 'all'">All ({{ activeProject?.members.flatMap(m => m.task_items).length || 0 }})</button>
+            <!-- My Tasks header with project tabs -->
+            <div class="border-b border-[#E4E7F0] bg-white">
+                <div class="flex items-center gap-3 px-4 pt-3">
+                    <span class="text-[14px] font-semibold text-[#0F1623]">My Tasks ({{ myTasks.length }})</span>
+                </div>
+                <div class="flex items-center gap-2 overflow-x-auto px-4 pb-2 pt-1">
+                    <button v-for="p in memberProjects" :key="p.id" class="whitespace-nowrap rounded-full px-3.5 py-1.5 text-[11px] font-medium transition-all" :class="activeProjectTab === p.id ? 'bg-[#0F1623] text-white' : 'bg-[#F0F2F8] text-[#5A6278] hover:bg-[#E4E7F0]'" @click="activeProjectTab = p.id">
+                        {{ p.title }}
+                    </button>
+                </div>
             </div>
 
-            <!-- Task cards grid -->
+            <!-- Task cards -->
             <div class="flex-1 overflow-y-auto p-4">
                 <div v-if="memberViewTasks.length === 0" class="flex flex-col items-center justify-center py-16 text-center">
                     <span class="text-[11px] font-semibold uppercase tracking-widest text-[#9BA3B8]">No tasks yet</span>
                     <p class="mt-1 text-[12px] text-[#9BA3B8]">Tasks assigned to you will appear here.</p>
                 </div>
-                <div v-else class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <div v-for="task in memberViewTasks" :key="task.id" class="flex flex-col rounded-2xl border border-[#E4E7F0] bg-white p-4 transition hover:shadow-sm">
-                        <!-- Header -->
-                        <div class="mb-2 flex items-start justify-between">
-                            <div class="flex-1 min-w-0">
-                                <div class="text-[14px] font-semibold text-[#0F1623]">{{ task.title }}</div>
-                                <div class="mt-0.5 flex items-center gap-2">
-                                    <span v-if="task.deadline" class="flex items-center gap-1 text-[10px] text-[#9BA3B8]">
-                                        <Calendar class="h-3 w-3" />{{ task.deadline }}
-                                    </span>
-                                    <span class="rounded bg-[#EEF3FF] px-1.5 py-0.5 text-[9px] font-medium text-[#2563EB]">{{ task.file_type || 'Task' }}</span>
+                <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3" style="align-items:start;">
+                        <div v-for="task in memberViewTasks" :key="task.id" class="card" style="background:#fff;border-radius:20px;padding:20px;box-shadow:0 2px 12px rgba(0,0,0,.08);width:100%;position:relative;">
+
+                            <!-- Pin button -->
+                            <button style="position:absolute;top:12px;right:12px;border:none;background:none;cursor:pointer;padding:4px;border-radius:6px;transition:background .15s;display:flex;align-items:center;justify-content:center;" :style="{ color: task.pinned ? '#2563EB' : '#C7C7CC' }" :title="task.pinned ? 'Unpin' : 'Pin'" @click="togglePin(task)">
+                                <Pin v-if="task.pinned" class="h-4 w-4" />
+                                <PinOff v-else class="h-4 w-4" />
+                            </button>
+
+                            <!-- Header -->
+                            <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;">
+                                <div style="width:52px;height:52px;border-radius:50%;border:2px solid #2563EB;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;color:#2563EB;flex-shrink:0;font-family:'DM Sans',sans-serif;">
+                                    {{ (task.project_member?.user?.name || '?').charAt(0).toUpperCase() }}
+                                </div>
+                                <div style="flex:1;min-width:0;">
+                                    <div style="display:flex;align-items:center;gap:8px;">
+                                        <span style="font-size:17px;font-weight:600;color:#000;">{{ task.project_member?.user?.name || 'Unassigned' }}</span>
+                                        <span style="width:10px;height:10px;border-radius:50%;flex-shrink:0;" :style="{ background: task.project_member && isActive(task.project_member.user) ? '#34C759' : '#C7C7CC' }"></span>
+                                    </div>
+                                    <div style="font-size:13px;color:#666;margin-top:1px;">{{ taskMemberRole(task) }}</div>
+                                    <div style="font-size:13px;color:#2563EB;font-weight:500;margin-top:2px;">Task: {{ task.checklist_items?.length || 0 }}</div>
                                 </div>
                             </div>
-                            <div class="flex items-center gap-1.5">
-                                <span class="inline-block h-2 w-2 rounded-full" :class="priorityDots[task.priority] || 'bg-gray-400'" :title="priorityLabels[task.priority] || task.priority" />
+
+                            <!-- Body -->
+                            <div style="display:flex;flex-direction:column;gap:10px;">
+
+                                <!-- Task title -->
+                                <div style="font-size:14px;color:#222;"><span style="font-weight:600;">Task: </span>{{ task.title }}</div>
+
+                                <!-- Attachments (view icon + filename) -->
+                                <div v-if="fileUrl(task)" style="font-size:14px;color:#222;">
+                                    <span style="font-weight:600;">Attachments: </span>
+                                    <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                                        <a :href="fileUrl(task)!" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;background:#F0F2F8;border-radius:8px;padding:6px 10px;font-size:12px;color:#0F1623;text-decoration:none;">
+                                            <Eye class="h-3.5 w-3.5" style="color:#2563EB;" />
+                                            {{ task.file_name || task.file_path?.split('/').pop() || 'View file' }}
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <!-- Inline image (if IMAGE type) -->
+                                <div v-if="isImageFile(task) && fileUrl(task)" style="margin-top:4px;">
+                                    <img :src="fileUrl(task)" style="max-width:100%;height:auto;border-radius:8px;display:block;" />
+                                </div>
+
+                                <!-- To-Do -->
+                                <div v-if="task.checklist_items?.length">
+                                    <div style="font-size:14px;font-weight:600;color:#222;margin-bottom:6px;">To-Do:</div>
+                                    <div v-for="item in task.checklist_items" :key="item.id" style="display:flex;align-items:center;gap:8px;font-size:14px;color:#222;margin-bottom:5px;cursor:pointer;" @click="toggleChecklist(item)">
+                                        <input type="checkbox" :checked="item.is_completed" style="width:15px;height:15px;accent-color:#2563EB;cursor:pointer;flex-shrink:0;" @click.stop @change="toggleChecklist(item)" />
+                                        <span :style="{ textDecoration: item.is_completed ? 'line-through' : 'none', color: item.is_completed ? '#999' : '#222' }">{{ item.title }}</span>
+                                    </div>
+                                    <div style="margin-top:6px;">
+                                        <div style="height:4px;background:#E5E5EA;border-radius:99px;overflow:hidden;">
+                                            <div style="height:100%;border-radius:99px;background:#2563EB;transition:width .3s ease;" :style="{ width: taskProgress(task) + '%' }"></div>
+                                        </div>
+                                        <div style="font-size:11px;color:#999;margin-top:3px;">{{ taskProgress(task) }}% complete</div>
+                                    </div>
+                                </div>
+
+                                <!-- Description (collapsible) -->
+                                <div>
+                                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                                        <span style="font-size:14px;font-weight:600;color:#222;">Descriptions:</span>
+                                        <button v-if="task.description && task.description.length > 60" style="border:none;background:none;color:#2563EB;font-size:11px;font-weight:500;cursor:pointer;padding:2px 6px;border-radius:4px;" @click="toggleExpand(task.id)">
+                                            {{ expandedTasks.has(task.id) ? 'Less' : 'View more' }}
+                                        </button>
+                                    </div>
+                                    <div style="font-size:13px;color:#888;margin-top:3px;min-height:18px;" :style="{ maxHeight: expandedTasks.has(task.id) || !task.description || task.description.length <= 60 ? 'none' : '36px', overflow: 'hidden' }">
+                                        {{ task.description || '' }}
+                                    </div>
+                                </div>
+
+                                <!-- Assignee (boss/admin) -->
+                                <div style="font-size:14px;color:#222;"><span style="font-weight:600;">Assignee: </span>{{ task.creator?.name || 'Admin' }}</div>
+
+                                <!-- Attach file container -->
+                                <div v-if="task.project_member_id === currentMember?.id" style="border:1px dashed #D0D4E0;border-radius:12px;padding:12px;">
+                                    <div style="font-size:12px;font-weight:600;color:#5A6278;margin-bottom:8px;">Attach file</div>
+                                    <div v-if="task.file_type" style="margin-bottom:8px;">
+                                        <label style="display:inline-flex;align-items:center;gap:6px;background:#2563EB;color:#fff;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:500;cursor:pointer;">
+                                            <Upload class="h-3.5 w-3.5" /> Upload
+                                            <input type="file" :accept="task.file_type === 'IMAGE' ? '.jpg,.jpeg,.png,.gif,.webp' : '.' + task.file_type.toLowerCase() + ',.' + task.file_type.toLowerCase() + 'x'" style="display:none;" @change="(e) => handleTaskFileUpload(e, task.id)" />
+                                        </label>
+                                    </div>
+                                    <div v-else style="font-size:12px;color:#9BA3B8;">No file type set for this task</div>
+
+                                    <!-- Note textarea -->
+                                    <div style="margin-top:10px;">
+                                        <textarea v-if="task.project_member_id === currentMember?.id" v-model="task.member_note" placeholder="Write a note… (optional)" style="width:100%;border:1px solid #E4E7F0;border-radius:8px;padding:8px 10px;font-size:12px;font-family:'DM Sans',sans-serif;outline:none;resize:vertical;min-height:50px;color:#0F1623;" @input="saveMemberNote(task)"></textarea>
+                                    </div>
+                                </div>
                             </div>
+
+                            <!-- Done button -->
+                            <button v-if="task.project_member_id === currentMember?.id && task.status === 'accepted'" style="margin-top:14px;width:100%;padding:12px;border-radius:99px;border:none;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s,transform .1s;font-family:'DM Sans',sans-serif;" :style="{ background: !canMarkDone(task) ? '#A0AEC0' : '#2563EB', color: '#fff' }" :disabled="!canMarkDone(task)" @click="markDone(task)">
+                                {{ canMarkDone(task) ? 'Mark as done' : 'Complete all to-dos first' }}
+                            </button>
+                            <button v-else-if="task.status === 'completed'" style="margin-top:14px;width:100%;padding:12px;border-radius:99px;border:none;background:#34C759;color:#fff;font-size:15px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:default;">
+                                ✓ Done
+                            </button>
                         </div>
-                        <!-- Assignor -->
-                        <div class="mb-2 flex items-center gap-1.5 text-[10px] text-[#9BA3B8]">
-                            <span>by {{ task.project_member?.user?.name || task.creator?.name || 'System' }}</span>
-                        </div>
-                        <!-- Checklist -->
-                        <div v-if="task.checklist_items?.length" class="mb-2 flex flex-col gap-1">
-                            <div v-for="item in task.checklist_items" :key="item.id" class="flex items-center gap-2 text-[12px]">
-                                <input type="checkbox" :checked="item.is_completed" class="h-3.5 w-3.5 cursor-pointer accent-[#2563EB]" @change="toggleChecklist(item)" />
-                                <span :class="item.is_completed ? 'text-[#9BA3B8] line-through' : 'text-[#0F1623]'">{{ item.title }}</span>
-                            </div>
-                        </div>
-                        <!-- Progress -->
-                        <div v-if="task.checklist_items?.length" class="mb-2 flex items-center gap-2">
-                            <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[#F0F2F8]">
-                                <div class="h-full rounded-full transition-all" :style="{ width: taskProgress(task) + '%', backgroundColor: progressColor(taskProgress(task)) }" />
-                            </div>
-                            <span class="text-[10px] font-medium text-[#5A6278]">{{ taskProgress(task) }}%</span>
-                        </div>
-                        <!-- Actions -->
-                        <div class="mt-auto flex items-center gap-2 pt-2">
-                            <Button v-if="task.project_member_id === currentMember?.id && task.status === 'accepted'" size="sm" class="flex-1 bg-green-600 text-[11px] text-white hover:bg-green-700 disabled:opacity-40" :disabled="!canMarkDone(task)" @click="markDone(task)">
-                                {{ canMarkDone(task) ? 'Mark Done' : 'Complete all to-dos first' }}
-                            </Button>
-                            <div v-if="task.file_type && task.project_member_id === currentMember?.id" class="relative">
-                                <label class="flex cursor-pointer items-center gap-1 rounded-md border border-[#E4E7F0] px-2 py-1.5 text-[10px] text-[#5A6278] hover:bg-[#F0F2F8]">
-                                    <Upload class="h-3 w-3" /> Upload
-                                    <input type="file" :accept="'.' + task.file_type.toLowerCase() + ',.' + task.file_type.toLowerCase() + 'x'" class="absolute inset-0 cursor-pointer opacity-0" @change="(e) => handleTaskFileUpload(e, task.id)" />
-                                </label>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </main>
@@ -880,8 +977,8 @@ return;
                 <DialogTitle class="text-[#0F1623]">Select Roles</DialogTitle>
                 <DialogDescription>Assign predefined roles to team members.</DialogDescription>
             </DialogHeader>
-            <div v-if="!activeProject?.roles?.length" class="py-4 text-center text-[12px] text-[#9BA3B8]">
-                No roles defined for this project. Go to Manage tab to create roles.
+            <div v-if="!pageProps.allRoles?.length" class="py-4 text-center text-[12px] text-[#9BA3B8]">
+                No roles defined yet. Go to Manage tab to create roles.
             </div>
             <div v-else class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
                 <div v-for="member in activeProject?.members || []" :key="member.id" class="flex items-center gap-3 rounded-lg border border-[#E4E7F0] px-3 py-2">
@@ -895,7 +992,7 @@ return;
                         @change="(e) => assignMemberRole(member.id, (e.target as HTMLSelectElement).value)"
                     >
                         <option value="">No role</option>
-                        <option v-for="r in activeProject.roles" :key="r.id" :value="r.id">{{ r.name }}</option>
+                        <option v-for="r in pageProps.allRoles" :key="r.id" :value="r.id">{{ r.name }}</option>
                     </select>
                 </div>
             </div>
@@ -934,6 +1031,7 @@ return;
                         <option value="DOC">DOC</option>
                         <option value="PDF">PDF</option>
                         <option value="XLS">XLS</option>
+                        <option value="IMAGE">IMAGE</option>
                     </select>
                 </div>
                 <div>

@@ -17,9 +17,11 @@ class TaskItem extends Model
         'title',
         'description',
         'completion_notes',
+        'member_note',
         'deadline',
         'priority',
         'file_type',
+        'file_name',
         'file_path',
         'created_by',
         'status',
@@ -56,4 +58,12 @@ class TaskItem extends Model
     {
         return $this->hasMany(TaskChecklistItem::class, 'task_id');
     }
+
+    public function getFileUrlAttribute(): ?string
+    {
+        if (!$this->file_path) return null;
+        return url('storage/' . $this->file_path);
+    }
+
+    protected $appends = ['file_url'];
 }

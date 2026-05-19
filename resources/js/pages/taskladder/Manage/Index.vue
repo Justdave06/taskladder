@@ -44,7 +44,7 @@ interface Member {
 
 interface RoleData {
     id: number;
-    project_id: number;
+    project_id: number | null;
     name: string;
 }
 
@@ -69,6 +69,7 @@ interface AppUser {
 const props = defineProps<{
     projects: ProjectData[];
     allUsers: AppUser[];
+    allRoles: RoleData[];
 }>();
 
 const showProjectDialog = ref(false);
@@ -82,11 +83,11 @@ const newRoleName = ref('');
 const addingRoleForProject = ref<number | null>(null);
 const showRolesForProject = ref<number | null>(null);
 const showRoleCreateDialog = ref(false);
-const roleCreateForm = ref({ project_id: '', name: '' });
+    const roleCreateForm = ref({ name: '' });
 
-function roleName(project: ProjectData, member: Member): string {
+function roleName(member: Member): string {
     if (member.role_id) {
-        const r = project.roles.find((r) => r.id === member.role_id);
+        const r = props.allRoles.find((r) => r.id === member.role_id);
 
         if (r) {
 return r.name;
@@ -96,12 +97,12 @@ return r.name;
     return member.role || 'Member';
 }
 
-function createRole(projectId: number) {
+function createRole() {
     if (!newRoleName.value.trim()) {
 return;
 }
 
-    router.post(manage.roles.store.url(), { project_id: projectId, name: newRoleName.value }, {
+    router.post(manage.roles.store.url(), { name: newRoleName.value }, {
         preserveScroll: true,
         onSuccess: () => {
  newRoleName.value = ''; addingRoleForProject.value = null; 
@@ -192,13 +193,7 @@ function openInvite(projectId: number) {
 }
 
 function openRoleCreateDialog() {
-    if (!props.projects.length) {
- alert('No projects yet. Create a project first.');
-
- return; 
-}
-
-    roleCreateForm.value = { project_id: String(props.projects[0].id), name: '' };
+    roleCreateForm.value = { name: '' };
     showRoleCreateDialog.value = true;
 }
 
@@ -207,10 +202,10 @@ function createRoleFromDialog() {
 return;
 }
 
-    router.post(manage.roles.store.url(), { project_id: Number(roleCreateForm.value.project_id), name: roleCreateForm.value.name }, {
+    router.post(manage.roles.store.url(), { name: roleCreateForm.value.name }, {
         preserveScroll: true,
         onSuccess: () => {
-            roleCreateForm.value = { project_id: '', name: '' };
+            roleCreateForm.value = { name: '' };
             showRoleCreateDialog.value = false;
         },
     });
@@ -316,24 +311,6 @@ const avatarColors = [
                                     <div class="text-xs text-gray-500 truncate">{{ member.user.email }}</div>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <template v-if="project.roles.length > 0">
-                                        <select
-                                            class="cursor-pointer rounded border border-blue-200 bg-transparent px-2 py-0.5 text-[10px] text-blue-700 outline-none focus:border-blue-500"
-                                            :value="member.role_id ?? ''"
-                                            @change="(e) => assignMemberRole(member.id, (e.target as HTMLSelectElement).value)"
-                                        >
-                                            <option value="">No role</option>
-                                            <option v-for="r in project.roles" :key="r.id" :value="r.id">{{ r.name }}</option>
-                                        </select>
-                                    </template>
-                                    <template v-else>
-                                        <span class="rounded bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-                                            {{ roleName(project, member) }}
-                                        </span>
-                                    </template>
-                                    <Badge :variant="member.status === 'accepted' ? 'default' : 'secondary'" class="text-[10px]">
-                                        {{ member.status }}
-                                    </Badge>
                                     <button class="text-gray-400 hover:text-red-500" @click="removeMember(member.id)" title="Remove">
                                         <X class="h-3.5 w-3.5" />
                                     </button>
@@ -341,7 +318,7 @@ const avatarColors = [
                             </div>
                         </div>
 
-                        <!-- Roles management -->
+                        <!-- Roles management (global) -->
                         <div class="mt-3 border-t border-blue-100 pt-2 dark:border-blue-800">
                             <div class="flex items-center justify-between">
                                 <button class="flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-700" @click="showRolesForProject = showRolesForProject === project.id ? null : project.id">
@@ -355,18 +332,18 @@ const avatarColors = [
                                         v-model="newRoleName"
                                         class="flex-1 rounded border border-blue-300 px-2 py-1 text-[11px] outline-none focus:border-blue-500"
                                         placeholder="Role name…"
-                                        @keydown.enter="createRole(project.id)"
+                                        @keydown.enter="createRole()"
                                     />
-                                    <button class="text-[10px] font-medium text-blue-600 hover:text-blue-700" @click="createRole(project.id)">Save</button>
+                                    <button class="text-[10px] font-medium text-blue-600 hover:text-blue-700" @click="createRole()">Save</button>
                                     <button class="text-[10px] text-gray-400 hover:text-gray-600" @click="addingRoleForProject = null; newRoleName = ''">Cancel</button>
                                 </div>
-                                <div v-for="role in project.roles" :key="role.id" class="flex items-center justify-between rounded bg-blue-50 px-2 py-1 dark:bg-blue-900/20">
+                                <div v-for="role in allRoles" :key="role.id" class="flex items-center justify-between rounded bg-blue-50 px-2 py-1 dark:bg-blue-900/20">
                                     <span class="text-[11px] font-medium text-gray-700 dark:text-gray-300">{{ role.name }}</span>
                                     <button class="text-gray-400 hover:text-red-500" @click="deleteRole(role.id)" title="Delete role">
                                         <X class="h-3 w-3" />
                                     </button>
                                 </div>
-                                <div v-if="project.roles.length === 0" class="text-[10px] text-gray-400">No roles defined yet.</div>
+                                <div v-if="allRoles.length === 0" class="text-[10px] text-gray-400">No roles defined yet.</div>
                             </div>
                         </div>
                     </CardContent>
@@ -456,14 +433,14 @@ const avatarColors = [
                         </option>
                     </select>
                 </div>
-                <div v-if="inviteForm.project_id">
+                <div>
                     <Label class="text-xs text-gray-600">Role (optional)</Label>
                     <select
                         v-model="inviteForm.role_id"
                         class="flex h-10 w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300 dark:border-blue-700 dark:bg-gray-800 dark:text-gray-200"
                     >
                         <option value="">No role</option>
-                        <option v-for="r in (projects.find(p => p.id === inviteForm.project_id)?.roles || [])" :key="r.id" :value="String(r.id)">
+                        <option v-for="r in allRoles" :key="r.id" :value="String(r.id)">
                             {{ r.name }}
                         </option>
                     </select>
@@ -481,12 +458,11 @@ const avatarColors = [
         <DialogContent>
             <DialogHeader>
                 <DialogTitle class="text-blue-800 dark:text-blue-200">New Role</DialogTitle>
-                <DialogDescription>Add a new role for a project.</DialogDescription>
+                <DialogDescription>Add a new role.</DialogDescription>
             </DialogHeader>
             <div class="flex flex-col gap-3">
-                <p class="text-xs text-gray-500">Role for: <span class="font-medium text-gray-700">{{ projects.find(p => String(p.id) === roleCreateForm.project_id)?.title || '—' }}</span></p>
                 <div>
-                    <Label for="role-name" class="text-xs text-gray-600">Role name</Label>
+                    <Label for="role-name" class="text-xs text-gray-600">Role Name</Label>
                     <Input id="role-name" v-model="roleCreateForm.name" placeholder="e.g. Developer" class="border-blue-200 focus:border-blue-400" @keydown.enter="createRoleFromDialog" />
                 </div>
                 <div class="flex justify-end gap-2 pt-1">

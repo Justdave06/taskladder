@@ -21,9 +21,7 @@ createInertiaApp({
                 return AppBottomNavLayout;
         }
     },
-    progress: {
-        color: '#4B5563',
-    },
+    progress: false,
 });
 
 initializeTheme();

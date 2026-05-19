@@ -1,8 +1,10 @@
 <?php
 
 use App\Http\Controllers\BulletinController;
+use App\Http\Controllers\CompanyConnectController;
 use App\Http\Controllers\ManageController;
 use App\Http\Controllers\MessageController;
+use App\Http\Controllers\LedgerController;
 use App\Http\Controllers\NoteController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ProjectController;
@@ -65,6 +67,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('tasks/{task}/done', [TaskItemController::class, 'done'])->name('tasks.done');
     Route::patch('checklist-items/{item}', [TaskItemController::class, 'toggleChecklist'])->name('checklist-items.toggle');
     Route::post('tasks/{task}/pin', [TaskItemController::class, 'togglePin'])->name('tasks.pin');
+    Route::post('tasks/{task}/file', [TaskItemController::class, 'uploadFile'])->name('tasks.file');
     Route::delete('tasks/{task}', [TaskItemController::class, 'destroy'])->name('tasks.destroy');
 
     // Team
@@ -100,6 +103,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('bulletin', [BulletinController::class, 'index'])->name('bulletin');
     Route::post('bulletin/posts', [BulletinController::class, 'store'])->name('bulletin.posts.store');
     Route::post('bulletin/posts/{post}/like', [BulletinController::class, 'toggleLike'])->name('bulletin.posts.like');
+    Route::delete('bulletin/posts/{post}', [BulletinController::class, 'destroy'])->name('bulletin.posts.destroy');
 
     // Notifications
     Route::get('notifications', [NotificationController::class, 'index'])->name('notifications');
@@ -107,11 +111,30 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('notifications/read-all', [NotificationController::class, 'markAllAsRead'])->name('notifications.read-all');
     Route::delete('notifications/clear', [NotificationController::class, 'clearAll'])->name('notifications.clear');
 
+    // Ledger
+    Route::get('ledger', [LedgerController::class, 'index'])->name('ledger');
+    Route::post('ledger', [LedgerController::class, 'store'])->name('ledger.store');
+    Route::get('ledger/{ledger}', [LedgerController::class, 'show'])->name('ledger.show');
+    Route::patch('ledger/{ledger}', [LedgerController::class, 'update'])->name('ledger.update');
+    Route::delete('ledger/{ledger}', [LedgerController::class, 'destroy'])->name('ledger.destroy');
+    Route::get('ledger/{ledger}/export', [LedgerController::class, 'export'])->name('ledger.export');
+    Route::post('ledger/images', [LedgerController::class, 'uploadImage'])->name('ledger.images.upload');
+    Route::post('ledger/{ledger}/send', [LedgerController::class, 'send'])->name('ledger.send');
+
     // Notes
     Route::post('notes', [NoteController::class, 'store'])->name('notes.store');
     Route::patch('notes/{note}', [NoteController::class, 'update'])->name('notes.update');
     Route::delete('notes/{note}', [NoteController::class, 'destroy'])->name('notes.destroy');
     Route::post('notes/reorder', [NoteController::class, 'reorder'])->name('notes.reorder');
+
+    // Company Connect
+    Route::get('connect', [CompanyConnectController::class, 'index'])->name('connect');
+    Route::get('connect/pending-count', [CompanyConnectController::class, 'pendingCount'])->name('connect.pending-count');
+    Route::get('connect/company/{connectCode}', [CompanyConnectController::class, 'spectate'])->name('connect.spectate');
+    Route::post('connect/send', [CompanyConnectController::class, 'send'])->name('connect.send');
+    Route::post('connect/{connection}/accept', [CompanyConnectController::class, 'accept'])->name('connect.accept');
+    Route::post('connect/{connection}/decline', [CompanyConnectController::class, 'decline'])->name('connect.decline');
+    Route::delete('connect/{connection}', [CompanyConnectController::class, 'destroy'])->name('connect.destroy');
 
     // Legacy project routes (accessible but not in main nav)
     Route::get('projects', [ProjectController::class, 'index'])->name('projects.index');
@@ -129,6 +152,24 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // Broadcasting auth
     Broadcast::routes();
+
+    // Superadmin routes
+    Route::middleware(['admin'])->prefix('admin')->name('admin.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Admin\AdminDashboardController::class, 'index'])->name('dashboard');
+        Route::get('/users', [\App\Http\Controllers\Admin\AdminUserController::class, 'index'])->name('users');
+        Route::post('/users', [\App\Http\Controllers\Admin\AdminUserController::class, 'store'])->name('users.store');
+        Route::patch('/users/{user}', [\App\Http\Controllers\Admin\AdminUserController::class, 'update'])->name('users.update');
+        Route::delete('/users/{user}', [\App\Http\Controllers\Admin\AdminUserController::class, 'destroy'])->name('users.destroy');
+        Route::get('/roles', [\App\Http\Controllers\Admin\AdminRoleController::class, 'index'])->name('roles');
+        Route::post('/roles', [\App\Http\Controllers\Admin\AdminRoleController::class, 'store'])->name('roles.store');
+        Route::patch('/roles/{role}', [\App\Http\Controllers\Admin\AdminRoleController::class, 'update'])->name('roles.update');
+        Route::delete('/roles/{role}', [\App\Http\Controllers\Admin\AdminRoleController::class, 'destroy'])->name('roles.destroy');
+        Route::get('/companies', [\App\Http\Controllers\Admin\CompanyController::class, 'index'])->name('companies');
+        Route::post('/companies', [\App\Http\Controllers\Admin\CompanyController::class, 'store'])->name('companies.store');
+        Route::patch('/companies/{company}', [\App\Http\Controllers\Admin\CompanyController::class, 'update'])->name('companies.update');
+        Route::delete('/companies/{company}', [\App\Http\Controllers\Admin\CompanyController::class, 'destroy'])->name('companies.destroy');
+        Route::post('/companies/{company}/assign-admin', [\App\Http\Controllers\Admin\CompanyController::class, 'assignAdmin'])->name('companies.assign-admin');
+    });
 });
 
 require __DIR__.'/settings.php';

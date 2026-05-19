@@ -12,9 +12,14 @@ class Role extends Model
     use HasFactory;
 
     protected $fillable = [
-        'project_id',
         'name',
+        'company_id',
     ];
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
+    }
 
     public function project(): BelongsTo
     {

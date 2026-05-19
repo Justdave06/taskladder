@@ -6,6 +6,7 @@ use App\Events\CallEvent;
 use App\Events\MessageReacted;
 use App\Events\MessageSent;
 use App\Events\UserTyping;
+use App\Models\Company;
 use App\Models\Message;
 use App\Models\MessageAttachment;
 use App\Models\MessageReaction;
@@ -22,7 +23,37 @@ class MessageController extends Controller
     {
         $user = $request->user();
 
-        $contacts = User::where('id', '!=', $user->id)->get();
+        if ($user->is_superadmin) {
+            $contacts = User::where('is_company_admin', true)
+                ->where('id', '!=', $user->id)
+                ->with('company')
+                ->get();
+        } elseif ($user->is_company_admin) {
+            $sameCompany = User::where('id', '!=', $user->id)
+                ->where('company_id', $user->company_id)
+                ->with('company')
+                ->get();
+            $superadmin = User::where('is_superadmin', true)
+                ->with('company')
+                ->get();
+            $contacts = $sameCompany->concat($superadmin);
+        } else {
+            $contacts = User::where('id', '!=', $user->id)
+                ->where('company_id', $user->company_id)
+                ->with('company')
+                ->get();
+        }
+
+        // Include connected company admins for users with a company
+        if ($user->company_id) {
+            $myCompany = $user->company;
+            $connectedCompanies = $myCompany->connectedCompanies();
+            $connectedUsers = User::whereIn('company_id', $connectedCompanies->pluck('id'))
+                ->where('is_company_admin', true)
+                ->with('company')
+                ->get();
+            $contacts = $contacts->concat($connectedUsers);
+        }
 
         $messages = Message::with('user', 'attachments', 'reactions.user')
             ->where('user_id', $user->id)
@@ -39,7 +70,7 @@ class MessageController extends Controller
     public function store(Request $request): JsonResponse|RedirectResponse
     {
         $validated = $request->validate([
-            'content' => ['required_without:attachment_ids', 'string', 'max:5000'],
+            'content' => ['nullable', 'required_without:attachment_ids', 'string', 'max:5000'],
             'recipient_id' => ['required', 'exists:users,id'],
             'attachment_ids' => ['sometimes', 'array'],
             'attachment_ids.*' => ['exists:message_attachments,id'],

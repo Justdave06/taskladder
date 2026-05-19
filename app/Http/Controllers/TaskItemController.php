@@ -24,9 +24,14 @@ class TaskItemController extends Controller
         $user->last_active_at = now();
         $user->saveQuietly();
 
-        $projectIds = Project::where('created_by', $user->id)
-            ->orWhereHas('members', fn ($q) => $q->where('user_id', $user->id))
-            ->pluck('id');
+        $projectIds = Project::where(function ($q) use ($user) {
+            $q->where('created_by', $user->id)
+              ->orWhereHas('members', fn ($q2) => $q2->where('user_id', $user->id));
+        });
+        if (!$user->is_superadmin) {
+            $projectIds->where('company_id', $user->company_id);
+        }
+        $projectIds = $projectIds->pluck('id');
 
         $projects = Project::whereIn('id', $projectIds)
             ->with(['members' => function ($q) {
@@ -63,6 +68,7 @@ class TaskItemController extends Controller
                 ->latest()
                 ->get()
                 ->groupBy('project_id'),
+            'allRoles' => \App\Models\Role::all(),
         ]);
     }
 
@@ -79,9 +85,14 @@ class TaskItemController extends Controller
     {
         $user = $request->user();
 
-        $projectIds = Project::where('created_by', $user->id)
-            ->orWhereHas('members', fn ($q) => $q->where('user_id', $user->id))
-            ->pluck('id');
+        $projectIds = Project::where(function ($q) use ($user) {
+            $q->where('created_by', $user->id)
+              ->orWhereHas('members', fn ($q2) => $q2->where('user_id', $user->id));
+        });
+        if (!$user->is_superadmin) {
+            $projectIds->where('company_id', $user->company_id);
+        }
+        $projectIds = $projectIds->pluck('id');
 
         $tasks = TaskItem::whereIn('project_id', $projectIds)
             ->with(['checklistItems', 'project', 'projectMember.user'])
@@ -90,9 +101,17 @@ class TaskItemController extends Controller
 
         $projects = Project::whereIn('id', $projectIds)->get(['id', 'title']);
 
+        $memberIds = ProjectMember::where('user_id', $user->id)->pluck('id');
+        $completedTasks = TaskItem::whereIn('project_member_id', $memberIds)
+            ->where('status', 'completed')
+            ->with(['checklistItems', 'creator', 'projectMember.user', 'project'])
+            ->latest('updated_at')
+            ->get();
+
         return Inertia::render('taskladder/Tasks/List', [
             'tasks' => $tasks,
             'projects' => $projects,
+            'completedTasks' => $completedTasks,
         ]);
     }
 
@@ -111,8 +130,11 @@ class TaskItemController extends Controller
         ]);
 
         $filePath = null;
+        $fileName = null;
         if ($request->hasFile('file')) {
-            $filePath = $request->file('file')->store('task-files', 'public');
+            $file = $request->file('file');
+            $fileName = $file->getClientOriginalName();
+            $filePath = $file->storeAs('task-files', time() . '_' . $fileName, 'public');
         }
 
         $task = TaskItem::create([
@@ -122,6 +144,7 @@ class TaskItemController extends Controller
             'deadline' => $validated['deadline'] ?? null,
             'priority' => $validated['priority'],
             'file_type' => !empty($validated['file_type']) ? $validated['file_type'] : null,
+            'file_name' => $fileName,
             'file_path' => $filePath,
             'created_by' => $request->user()->id,
         ]);
@@ -237,13 +260,16 @@ class TaskItemController extends Controller
             'file_type' => ['nullable', 'string', 'max:10'],
             'deadline' => ['nullable', 'date'],
             'file' => ['nullable', 'file', 'max:10240'],
+            'member_note' => ['nullable', 'string', 'max:50000'],
         ]);
 
         $data = collect($validated)->except('file')->toArray();
 
         if ($request->hasFile('file')) {
-            $data['file_path'] = $request->file('file')->store('task-files', 'public');
-            $data['file_type'] = $data['file_type'] ?? $this->inferFileType($request->file('file'));
+            $file = $request->file('file');
+            $data['file_name'] = $file->getClientOriginalName();
+            $data['file_path'] = $file->storeAs('task-files', time() . '_' . $data['file_name'], 'public');
+            $data['file_type'] = $data['file_type'] ?? $this->inferFileType($file);
         }
 
         $task->update($data);
@@ -257,7 +283,26 @@ class TaskItemController extends Controller
         if (str_ends_with($name, '.doc') || str_ends_with($name, '.docx')) return 'DOC';
         if (str_ends_with($name, '.pdf')) return 'PDF';
         if (str_ends_with($name, '.xls') || str_ends_with($name, '.xlsx')) return 'XLS';
+        if (preg_match('/\.(jpg|jpeg|png|gif|webp)$/', $name)) return 'IMAGE';
         return 'DOC';
+    }
+
+    public function uploadFile(Request $request, TaskItem $task): RedirectResponse
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'max:10240'],
+        ]);
+
+        $file = $request->file('file');
+        $fileName = $file->getClientOriginalName();
+        $filePath = $file->storeAs('task-files', time() . '_' . $fileName, 'public');
+        $task->update([
+            'file_path' => $filePath,
+            'file_name' => $fileName,
+            'file_type' => $this->inferFileType($file),
+        ]);
+
+        return redirect()->back();
     }
 
     public function destroy(Request $request, TaskItem $task): RedirectResponse

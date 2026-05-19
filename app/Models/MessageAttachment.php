@@ -16,6 +16,8 @@ class MessageAttachment extends Model
         'file_size',
     ];
 
+    protected $appends = ['url'];
+
     public function message(): BelongsTo
     {
         return $this->belongsTo(Message::class);

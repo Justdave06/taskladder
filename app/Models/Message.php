@@ -15,6 +15,7 @@ class Message extends Model
         'content',
         'type',
         'call_duration',
+        'ledger_id',
     ];
 
     public function project(): BelongsTo

@@ -17,7 +17,13 @@ class Project extends Model
         'created_by',
         'status',
         'color',
+        'company_id',
     ];
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
+    }
 
     protected function casts(): array
     {

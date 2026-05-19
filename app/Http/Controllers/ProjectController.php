@@ -11,12 +11,16 @@ use Inertia\Response;
 
 class ProjectController extends Controller
 {
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $user = $request->user();
+
         $projects = Project::with('creator')
-            ->withCount('members')
-            ->latest()
-            ->get()
+            ->withCount('members');
+        if (!$user->is_superadmin) {
+            $projects->where('company_id', $user->company_id);
+        }
+        $projects = $projects->latest()->get()
             ->load(['members.taskItems' => fn ($q) => $q->select('id', 'project_member_id', 'is_completed')]);
 
         return Inertia::render('taskladder/Projects/Index', [
@@ -31,7 +35,9 @@ class ProjectController extends Controller
             'description' => ['nullable', 'string', 'max:5000'],
         ]);
 
-        $request->user()->createdProjects()->create($validated);
+        $data = $validated;
+        $data['company_id'] = $request->user()->company_id;
+        $request->user()->createdProjects()->create($data);
 
         return redirect()->back();
     }
@@ -50,13 +56,19 @@ class ProjectController extends Controller
         return redirect()->back();
     }
 
-    public function show(Project $project): Response
+    public function show(Request $request, Project $project): Response
     {
+        $user = $request->user();
         $project->load(['creator', 'members.user', 'members.taskItems']);
+
+        $users = \App\Models\User::query();
+        if (!$user->is_superadmin) {
+            $users->where('company_id', $user->company_id);
+        }
 
         return Inertia::render('taskladder/Projects/Show', [
             'project' => $project,
-            'users' => \App\Models\User::all(['id', 'name', 'email']),
+            'users' => $users->get(['id', 'name', 'email']),
         ]);
     }
 

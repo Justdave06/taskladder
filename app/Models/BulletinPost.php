@@ -9,22 +9,19 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class BulletinPost extends Model
 {
     protected $fillable = [
-        'project_id',
         'user_id',
         'content',
         'image',
+        'company_id',
+        'visibility',
     ];
 
     protected function casts(): array
     {
         return [
             'image' => 'string',
+            'visibility' => 'string',
         ];
-    }
-
-    public function project(): BelongsTo
-    {
-        return $this->belongsTo(Project::class);
     }
 
     public function user(): BelongsTo

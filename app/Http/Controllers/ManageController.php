@@ -19,17 +19,26 @@ class ManageController extends Controller
     {
         $user = $request->user();
 
-        $projects = Project::where('created_by', $user->id)
-            ->with(['members' => fn ($q) => $q->with('user'), 'creator', 'roles'])
-            ->latest()
-            ->get();
+        $query = Project::with(['members' => fn ($q) => $q->with('user'), 'creator', 'roles']);
+        if (!$user->is_superadmin) {
+            $query->where('company_id', $user->company_id);
+        }
+        $projects = $query->latest()->get();
 
-        $allUsers = User::where('id', '!=', $user->id)
-            ->get(['id', 'name', 'email']);
+        $allUsers = User::where('id', '!=', $user->id);
+        if (!$user->is_superadmin) {
+            $allUsers->where('company_id', $user->company_id);
+        }
+
+        $allRoles = Role::query();
+        if (!$user->is_superadmin) {
+            $allRoles->where('company_id', $user->company_id);
+        }
 
         return Inertia::render('taskladder/Manage/Index', [
             'projects' => $projects,
-            'allUsers' => $allUsers,
+            'allUsers' => $allUsers->get(['id', 'name', 'email']),
+            'allRoles' => $allRoles->get(),
         ]);
     }
 
@@ -41,7 +50,9 @@ class ManageController extends Controller
             'color' => ['nullable', 'string', 'max:20'],
         ]);
 
-        $request->user()->createdProjects()->create($validated);
+        $data = $validated;
+        $data['company_id'] = $request->user()->company_id;
+        $request->user()->createdProjects()->create($data);
 
         return redirect()->back();
     }
@@ -70,6 +81,7 @@ class ManageController extends Controller
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
+            'company_id' => $request->user()->company_id,
         ]);
 
         return redirect()->back();
@@ -90,27 +102,18 @@ class ManageController extends Controller
     public function storeRole(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'project_id' => ['required', 'exists:projects,id'],
             'name' => ['required', 'string', 'max:255'],
         ]);
 
-        $project = Project::findOrFail($validated['project_id']);
-
-        if ($project->created_by !== $request->user()->id) {
-            abort(403);
-        }
-
-        $project->roles()->create($validated);
+        $data = $validated;
+        $data['company_id'] = $request->user()->company_id;
+        Role::create($data);
 
         return redirect()->back();
     }
 
     public function destroyRole(Role $role): RedirectResponse
     {
-        if ($role->project->created_by !== request()->user()->id) {
-            abort(403);
-        }
-
         $role->delete();
 
         return redirect()->back();

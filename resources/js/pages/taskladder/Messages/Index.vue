@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, router, usePage } from '@inertiajs/vue3';
-import { Search, Send, Paperclip, Smile, Trash2, Pencil, X, Check, File, Image as ImageIcon, Loader, Phone, Video, PhoneOff, Mic, MicOff, VideoOff } from 'lucide-vue-next';
+import { Search, Send, Paperclip, Smile, Trash2, Pencil, X, Check, File, Image as ImageIcon, Loader, AlertCircle, Phone, Video, PhoneOff, Mic, MicOff, VideoOff } from 'lucide-vue-next';
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useCall } from '../../../composables/useCall';
 import { useReactions, REACTION_EMOJIS } from '../../../composables/useReactions';
@@ -10,6 +10,8 @@ interface UserData {
     name: string;
     email: string;
     last_active_at?: string | null;
+    is_company_admin?: boolean;
+    company?: { id: number; name: string } | null;
 }
 
 interface AttachmentData {
@@ -39,6 +41,7 @@ interface MessageData {
     user: { id: number; name: string; email: string };
     attachments?: AttachmentData[];
     reactions?: ReactionData[];
+    ledger_id?: number | null;
 }
 
 interface PageProps {
@@ -48,7 +51,18 @@ interface PageProps {
 
 const page = usePage();
 const pageProps = page.props as unknown as PageProps;
-const authUser = page.props.auth.user as { id: number; name: string; email: string };
+const authUser = page.props.auth.user as { id: number; name: string; email: string; is_company_admin: boolean; company_id?: number | null };
+
+function isSameCompany(contact: UserData): boolean {
+    return !!authUser.company_id && !!contact.company && contact.company.id === authUser.company_id;
+}
+
+function displayName(contact: UserData): string {
+    if (!authUser.company_id) return contact.name;
+    if (isSameCompany(contact)) return contact.name;
+    if (contact.company) return contact.company.name;
+    return contact.name;
+}
 
 const contacts = ref(pageProps.contacts);
 const allMessages = ref(pageProps.messages);
@@ -69,7 +83,10 @@ let typingStopTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Uploads
 const uploadingFiles = ref<{ name: string; progress: string }[]>([]);
-const pendingAttachmentIds = ref<number[]>([]);
+const pendingAttachments = ref<{ id: number; name: string; mime_type?: string; url?: string }[]>([]);
+const uploadErrors = ref<string[]>([]);
+const sendErrors = ref<string[]>([]);
+const isSending = ref(false);
 
 // Edit
 const editingMsgId = ref<number | null>(null);
@@ -77,6 +94,29 @@ const editText = ref('');
 
 // Delete
 const deletingMsgId = ref<number | null>(null);
+
+// Unread tracking
+const lastReadTimestamps = ref<Record<number, string>>({});
+const unreadCounts = computed(() => {
+    const counts = new Map<number, number>();
+    for (const m of allMessages.value) {
+        const from = m.user_id === authUser.id ? m.recipient_id : m.user_id;
+        if (!from || from === authUser.id) continue;
+        const readTime = lastReadTimestamps.value[from];
+        if (readTime && m.created_at > readTime) {
+            counts.set(from, (counts.get(from) || 0) + 1);
+        }
+    }
+    for (const m of optimisticMessages.value) {
+        const from = m.user_id === authUser.id ? m.recipient_id : m.user_id;
+        if (!from || from === authUser.id) continue;
+        const readTime = lastReadTimestamps.value[from];
+        if (readTime && m.created_at > readTime) {
+            counts.set(from, (counts.get(from) || 0) + 1);
+        }
+    }
+    return counts;
+});
 
 // Emoji
 const showEmojiPicker = ref(false);
@@ -126,15 +166,21 @@ const avatarColors = [
 ];
 
 const filteredContacts = computed(() => {
-    if (!searchQuery.value.trim()) {
-        return contacts.value;
-    }
+    const list = searchQuery.value.trim()
+        ? contacts.value.filter(c =>
+            c.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
+            c.email.toLowerCase().includes(searchQuery.value.toLowerCase()),
+          )
+        : [...contacts.value];
 
-    const q = searchQuery.value.toLowerCase();
-
-    return contacts.value.filter(c =>
-        c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q),
-    );
+    return list.sort((a, b) => {
+        const aMsg = lastMessagePerContact.value.get(a.id);
+        const bMsg = lastMessagePerContact.value.get(b.id);
+        if (!aMsg && !bMsg) return 0;
+        if (!aMsg) return 1;
+        if (!bMsg) return -1;
+        return new Date(bMsg.created_at).getTime() - new Date(aMsg.created_at).getTime();
+    });
 });
 
 const conversation = computed(() => {
@@ -237,8 +283,10 @@ function isActive(user: { last_active_at?: string | null }): boolean {
 
 function selectContact(contact: UserData) {
     selectedContact.value = contact;
+    lastReadTimestamps.value[contact.id] = new Date().toISOString();
     editingMsgId.value = null;
     deletingMsgId.value = null;
+    nextTick(() => scrollToBottom());
 }
 
 function autoResize() {
@@ -258,6 +306,10 @@ function formatFileSize(bytes: number): string {
 
 function getFileIcon(mime: string) {
     return mime.startsWith('image/') ? ImageIcon : File;
+}
+
+function isImageOnly(msg: MessageData): boolean {
+    return !msg.content && !!msg.attachments?.length && msg.attachments.every(a => a.mime_type.startsWith('image/'));
 }
 
 // ---- Call ----
@@ -350,12 +402,19 @@ function uploadFile(file: File) {
         if (!res.ok) throw new Error('Upload failed');
         return res.json();
     }).then((attachment: any) => {
-        pendingAttachmentIds.value.push(attachment.id);
+        pendingAttachments.value.push({ id: attachment.id, name: file.name, mime_type: attachment.mime_type, url: attachment.url });
     }).catch(() => {
-        // silent
+        uploadErrors.value.push(`Failed to upload "${file.name}"`);
+        setTimeout(() => {
+            uploadErrors.value = uploadErrors.value.filter(e => !e.includes(file.name));
+        }, 5000);
     }).finally(() => {
         uploadingFiles.value = uploadingFiles.value.filter(f => f.name !== file.name);
     });
+}
+
+function removePendingAttachment(attachmentId: number) {
+    pendingAttachments.value = pendingAttachments.value.filter(a => a.id !== attachmentId);
 }
 
 // ---- Send ----
@@ -369,63 +428,101 @@ function sendQuickReply(text: string) {
 }
 
 function sendMessage() {
-    const text = messageText.value.trim();
+    try {
+        if (isSending.value) return;
+        if (uploadingFiles.value.length > 0) return;
 
-    if (!text && pendingAttachmentIds.value.length === 0) {
-        return;
-    }
+        const text = messageText.value.trim();
 
-    if (!selectedContact.value) {
-        return;
-    }
+        if (!text && pendingAttachments.value.length === 0) {
+            return;
+        }
 
-    if (typingStopTimeout) {
-        clearTimeout(typingStopTimeout);
-        sendTypingEvent(false);
-    }
+        if (!selectedContact.value) {
+            return;
+        }
 
-    const tempId = -(Date.now() + Math.random());
+        if (typingStopTimeout) {
+            clearTimeout(typingStopTimeout);
+            sendTypingEvent(false);
+        }
 
-    optimisticMessages.value.push({
-        id: tempId,
-        user_id: authUser.id,
-        recipient_id: selectedContact.value.id,
-        content: text,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        user: { id: authUser.id, name: authUser.name, email: '' },
-        attachments: [],
-    });
+        const tempId = -(Date.now() + Math.random());
+        const attachmentMeta = [...pendingAttachments.value];
+        const attachmentIds = attachmentMeta.map(a => a.id);
+        const body: Record<string, any> = {
+            recipient_id: selectedContact.value.id,
+            attachment_ids: attachmentIds,
+        };
+        if (text) body.content = text;
 
-    fetch('/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
-        body: JSON.stringify({
+        pendingAttachments.value = [];
+
+        optimisticMessages.value.push({
+            id: tempId,
+            user_id: authUser.id,
             recipient_id: selectedContact.value.id,
             content: text,
-            attachment_ids: pendingAttachmentIds.value,
-        }),
-    }).then(res => {
-        if (!res.ok) throw new Error('Send failed');
-        return res.json();
-    }).then((realMsg: MessageData) => {
-        optimisticMessages.value = optimisticMessages.value.filter(m => m.id !== tempId);
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            user: { id: authUser.id, name: authUser.name, email: '' },
+            attachments: attachmentMeta.map(a => ({
+                id: a.id,
+                file_name: a.name,
+                file_path: '',
+                mime_type: a.mime_type || '',
+                file_size: 0,
+                message_id: null,
+                user_id: authUser.id,
+                url: a.url || '',
+            })),
+        });
 
-        if (!allMessages.value.some(m => m.id === realMsg.id)) {
-            allMessages.value = [...allMessages.value, realMsg];
-        }
-    }).catch(() => {
-        optimisticMessages.value = optimisticMessages.value.filter(m => m.id !== tempId);
-    });
+        isSending.value = true;
 
-    messageText.value = '';
-    pendingAttachmentIds.value = [];
-
-    if (textareaRef.value) {
-        textareaRef.value.style.height = 'auto';
+        fetch('/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+            body: JSON.stringify(body),
+        }).then(res => {
+            if (!res.ok) {
+                return res.text().then(textBody => {
+                    let msg = 'Send failed';
+                    try {
+                        const body = JSON.parse(textBody);
+                        if (body?.message) msg = body.message;
+                        if (body?.errors) msg = Object.values(body.errors).flat().join('; ');
+                    } catch {}
+                    throw new Error(msg);
+                });
+            }
+            return res.json();
+        }).then((realMsg: MessageData) => {
+            optimisticMessages.value = optimisticMessages.value.filter(m => m.id !== tempId);
+            if (!allMessages.value.some(m => m.id === realMsg.id)) {
+                allMessages.value = [...allMessages.value, realMsg];
+            }
+            messageText.value = '';
+            if (textareaRef.value) {
+                textareaRef.value.style.height = 'auto';
+            }
+            nextTick(() => scrollToBottom());
+        }).catch((err) => {
+            console.error('sendMessage failed:', err);
+            optimisticMessages.value = optimisticMessages.value.filter(m => m.id !== tempId);
+            pendingAttachments.value = attachmentMeta;
+            sendErrors.value.push(err.message || 'Failed to send message');
+            setTimeout(() => {
+                sendErrors.value = [];
+            }, 7000);
+        }).finally(() => {
+            isSending.value = false;
+        });
+    } catch (e) {
+        console.error('sendMessage JS error:', e);
+        sendErrors.value.push('JS Error: ' + (e as Error).message);
+        isSending.value = false;
     }
-
-    nextTick(() => scrollToBottom());
 }
 
 // ---- Edit ----
@@ -502,14 +599,29 @@ watch(
     { immediate: true },
 );
 
-watch(conversation, () => {
-    nextTick(() => scrollToBottom());
+let prevMsgCount = 0;
+watch(conversation, (msgs) => {
+    nextTick(() => {
+        const el = messagesContainer.value;
+        if (!el) return;
+        const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+        const hasNewMessages = msgs.length !== prevMsgCount;
+        if (isNearBottom && hasNewMessages) {
+            el.scrollTop = el.scrollHeight;
+        }
+        prevMsgCount = msgs.length;
+    });
 });
 
 let pollInterval: ReturnType<typeof setInterval>;
 let echo: any = null;
 
+function onDocumentClick() {
+    closeReactionPicker();
+}
+
 onMounted(async () => {
+    document.addEventListener('click', onDocumentClick);
     pollInterval = setInterval(() => {
         router.reload({ only: ['messages', 'contacts'] });
     }, 2000);
@@ -600,12 +712,11 @@ onMounted(async () => {
         // Echo connection failed — polling still works
     }
 
-    if (pageProps.contacts.length > 0) {
-        selectContact(pageProps.contacts[0]);
-    }
 });
 
 onUnmounted(() => {
+    document.removeEventListener('click', onDocumentClick);
+
     if (pollInterval) {
         clearInterval(pollInterval);
     }
@@ -650,16 +761,21 @@ onUnmounted(() => {
                 >
                     <div class="relative shrink-0">
                         <div class="flex h-10 w-10 items-center justify-center rounded-full text-[13px] font-semibold" :class="avatarColors[contact.id % avatarColors.length]">
-                            {{ contact.name.charAt(0).toUpperCase() }}
+                            {{ displayName(contact).charAt(0).toUpperCase() }}
                         </div>
                         <span class="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white" :class="isActive(contact) ? 'bg-green-400' : 'bg-gray-300'" />
                     </div>
                     <div class="min-w-0 flex-1">
                         <div class="flex items-center justify-between">
-                            <span class="truncate text-[13px] font-medium text-[#0F1623]">{{ contact.name }}</span>
-                            <span v-if="isActive(contact)" class="ml-1 shrink-0 text-[9px] font-semibold text-green-500">ONLINE</span>
+                            <span class="truncate text-[13px]" :class="unreadCounts.has(contact.id) ? 'font-bold text-[#0F1623]' : 'font-medium text-[#0F1623]'">{{ displayName(contact) }}</span>
+                            <div class="flex items-center gap-1.5">
+                                <span v-if="unreadCounts.has(contact.id)" class="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#2563EB] px-1.5 text-[9px] font-bold text-white">
+                                    {{ unreadCounts.get(contact.id) }}
+                                </span>
+                                <span v-if="isActive(contact)" class="shrink-0 text-[9px] font-semibold text-green-500">ONLINE</span>
+                            </div>
                         </div>
-                        <div class="truncate text-[11px] text-[#9BA3B8]">
+                        <div class="truncate text-[11px]" :class="unreadCounts.has(contact.id) ? 'font-semibold text-[#0F1623]' : 'text-[#9BA3B8]'">
                             {{ lastMessagePerContact.get(contact.id)?.content || 'No messages yet' }}
                         </div>
                     </div>
@@ -673,11 +789,11 @@ onUnmounted(() => {
             <div class="flex items-center gap-3 border-b border-[#E4E7F0] px-5 py-3">
                 <template v-if="selectedContact">
                     <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold" :class="avatarColors[selectedContact.id % avatarColors.length]">
-                        {{ selectedContact.name.charAt(0).toUpperCase() }}
+                        {{ displayName(selectedContact).charAt(0).toUpperCase() }}
                     </div>
                     <div class="flex-1">
                         <div class="flex items-center gap-2">
-                            <span class="text-[14px] font-semibold text-[#0F1623]">{{ selectedContact.name }}</span>
+                            <span class="text-[14px] font-semibold text-[#0F1623]">{{ displayName(selectedContact) }}</span>
                             <span class="flex items-center gap-1 text-[10px] font-semibold" :class="isActive(selectedContact) ? 'text-green-500' : 'text-[#9BA3B8]'">
                                 <span class="inline-block h-2 w-2 rounded-full" :class="isActive(selectedContact) ? 'bg-green-400' : 'bg-gray-300'" />
                                 {{ isActive(selectedContact) ? 'Online' : 'Offline' }}
@@ -722,28 +838,74 @@ onUnmounted(() => {
                             </div>
 
                             <!-- Regular message -->
-                            <div v-else class="group relative mb-2.5 flex" :class="msg.user_id === authUser.id ? 'justify-end' : 'justify-start'">
+                            <div v-else class="group relative mb-2.5 flex items-end gap-1.5" :class="msg.user_id === authUser.id ? 'justify-end' : 'justify-start'">
+                                <!-- Reaction button (outside bubble) -->
+                                <div class="hidden shrink-0 group-hover:flex" :class="msg.user_id !== authUser.id ? 'order-last' : ''">
+                                    <div class="relative">
+                                        <button class="flex h-5 w-5 items-center justify-center rounded-full text-[#9BA3B8] transition hover:bg-[#E4E7F0] hover:text-[#2563EB]" title="React" @click.stop="toggleReactionPicker(msg.id)">
+                                            <Smile class="h-3 w-3" />
+                                        </button>
+                                        <div v-if="showReactionPicker === msg.id" class="absolute bottom-8 z-50 flex gap-0.5 rounded-xl border border-[#E4E7F0] bg-white p-1.5 shadow-lg" :class="msg.user_id === authUser.id ? 'right-0' : 'left-0'">
+                                            <button
+                                                v-for="emoji in REACTION_EMOJIS"
+                                                :key="emoji"
+                                                class="flex h-7 w-7 items-center justify-center rounded-md text-[15px] transition hover:scale-125 hover:bg-[#F0F2F8]"
+                                                :class="{ 'scale-110': hasUserReacted(msg.reactions, authUser.id, emoji) }"
+                                                @click="sendReaction(msg.id, emoji, csrfToken)"
+                                            >
+                                                {{ emoji }}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div
-                                    class="max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-snug"
-                                    :class="msg.user_id === authUser.id
-                                        ? 'rounded-br-md bg-[#2563EB] text-white'
-                                        : 'rounded-bl-md border border-[#E4E7F0] bg-white text-[#0F1623]'"
+                                    class="max-w-[70%] text-[13px] leading-snug"
+                                    :class="isImageOnly(msg)
+                                        ? ''
+                                        : msg.user_id === authUser.id
+                                            ? 'rounded-2xl rounded-br-md bg-[#2563EB] text-white px-4 py-2.5'
+                                            : 'rounded-2xl rounded-bl-md border border-[#E4E7F0] bg-white text-[#0F1623] px-4 py-2.5'"
                                 >
                                     <div v-if="msg.user_id !== authUser.id" class="mb-1 text-[10px] font-medium text-[#9BA3B8]">{{ msg.user.name }}</div>
 
                                     <!-- Attachments -->
                                     <div v-if="msg.attachments && msg.attachments.length > 0" class="mb-2 space-y-1.5">
-                                        <a
-                                            v-for="att in msg.attachments"
-                                            :key="att.id"
-                                            :href="`/messages/attachments/${att.id}/download`"
-                                            class="flex items-center gap-2 rounded-lg p-2 text-[12px] transition"
-                                            :class="msg.user_id === authUser.id ? 'bg-blue-600 hover:bg-blue-700' : 'bg-[#F0F2F8] hover:bg-[#E4E7F0]'"
-                                        >
-                                            <component :is="getFileIcon(att.mime_type)" class="h-4 w-4 shrink-0" />
-                                            <span class="truncate">{{ att.file_name }}</span>
-                                            <span class="shrink-0 opacity-60">{{ formatFileSize(att.file_size) }}</span>
-                                        </a>
+                                        <template v-for="att in msg.attachments" :key="att.id">
+                                            <!-- Image — displayed as photo like Messenger -->
+                                            <img
+                                                v-if="att.mime_type.startsWith('image/') && att.url"
+                                                :src="att.url"
+                                                :alt="att.file_name"
+                                                class="max-w-[260px] w-full object-cover"
+                                                :class="isImageOnly(msg)
+                                                    ? msg.user_id === authUser.id
+                                                        ? 'rounded-2xl rounded-br-md'
+                                                        : 'rounded-2xl rounded-bl-md'
+                                                    : 'rounded-lg'"
+                                                loading="lazy"
+                                            />
+                                            <!-- Optimistic image (pending send) — placeholder -->
+                                            <div
+                                                v-else-if="att.mime_type.startsWith('image/')"
+                                                class="flex items-center gap-2 rounded-lg p-2 text-[12px] opacity-70"
+                                                :class="msg.user_id === authUser.id ? 'bg-blue-600' : 'bg-[#F0F2F8]'"
+                                            >
+                                                <ImageIcon class="h-4 w-4 shrink-0" />
+                                                <span class="truncate">{{ att.file_name }}</span>
+                                            </div>
+                                            <!-- Non-image file — download link -->
+                                            <a
+                                                v-else
+                                                :href="`/messages/attachments/${att.id}/download`"
+                                                class="flex items-center gap-2 rounded-lg p-2 text-[12px] transition"
+                                                :class="msg.user_id === authUser.id ? 'bg-blue-600 hover:bg-blue-700' : 'bg-[#F0F2F8] hover:bg-[#E4E7F0]'"
+                                            >
+                                                <component :is="getFileIcon(att.mime_type)" class="h-4 w-4 shrink-0" />
+                                                <span class="truncate">{{ att.file_name }}</span>
+                                                <span class="shrink-0 opacity-60">{{ formatFileSize(att.file_size) }}</span>
+                                            </a>
+                                        </template>
                                     </div>
 
                                     <!-- Reactions display -->
@@ -809,34 +971,19 @@ onUnmounted(() => {
                                             </button>
                                         </div>
 
-                                        <div v-else class="whitespace-pre-wrap break-words">
-                                            {{ msg.content }}
+                                        <div v-else-if="msg.content" class="whitespace-pre-wrap break-words">
+                                            <template v-if="msg.ledger_id">
+                                                <span class="cursor-pointer text-blue-400 underline hover:text-blue-300" @click="router.visit(`/ledger?open=${msg.ledger_id}`)">{{ msg.content }}</span>
+                                            </template>
+                                            <template v-else>
+                                                {{ msg.content }}
+                                            </template>
                                             <span v-if="msg.updated_at && msg.updated_at !== msg.created_at" class="ml-1 text-[9px] opacity-50">(edited)</span>
                                         </div>
                                     </template>
 
-                                    <div class="mt-1 flex items-end justify-between gap-2">
-                                        <span class="text-[9px]" :class="msg.user_id === authUser.id ? 'text-blue-200' : 'text-[#9BA3B8]'">
-                                            {{ new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
-                                        </span>
-                                        <div class="hidden gap-0.5 group-hover:flex">
-                                            <div class="relative">
-                                                <button class="flex h-5 w-5 items-center justify-center rounded-full text-[9px] hover:bg-black/10" title="React" @click.stop="toggleReactionPicker(msg.id)">
-                                                    <Smile class="h-3 w-3" />
-                                                </button>
-                                                <div v-if="showReactionPicker === msg.id" class="absolute bottom-6 z-50 flex gap-0.5 rounded-xl border border-[#E4E7F0] bg-white p-1.5 shadow-lg" :class="msg.user_id === authUser.id ? 'right-0' : 'left-0'">
-                                                    <button
-                                                        v-for="emoji in REACTION_EMOJIS"
-                                                        :key="emoji"
-                                                        class="flex h-7 w-7 items-center justify-center rounded-md text-[15px] transition hover:scale-125 hover:bg-[#F0F2F8]"
-                                                        :class="{ 'scale-110': hasUserReacted(msg.reactions, authUser.id, emoji) }"
-                                                        @click="sendReaction(msg.id, emoji, csrfToken)"
-                                                    >
-                                                        {{ emoji }}
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
+                                    <div class="mt-1 text-right text-[9px]" :class="msg.user_id === authUser.id ? 'text-blue-200' : 'text-[#9BA3B8]'">
+                                        {{ new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
                                     </div>
                                 </div>
                             </div>
@@ -874,10 +1021,29 @@ onUnmounted(() => {
                     </div>
                 </div>
 
+                <!-- Upload errors -->
+                <div v-if="uploadErrors.length > 0" class="mb-2 space-y-1">
+                    <div v-for="err in uploadErrors" :key="err" class="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-1.5 text-[11px] text-red-600">
+                        <AlertCircle class="h-3 w-3 shrink-0" />
+                        <span>{{ err }}</span>
+                    </div>
+                </div>
+
+                <!-- Send errors -->
+                <div v-if="sendErrors.length > 0" class="mb-2 space-y-1">
+                    <div v-for="err in sendErrors" :key="err" class="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-1.5 text-[11px] text-red-600">
+                        <AlertCircle class="h-3 w-3 shrink-0" />
+                        <span>{{ err }}</span>
+                    </div>
+                </div>
+
                 <!-- Pending attachments preview -->
-                <div v-if="pendingAttachmentIds.length > 0" class="mb-2 flex flex-wrap gap-1.5">
-                    <span class="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-[10px] font-medium text-blue-700">
-                        {{ pendingAttachmentIds.length }} file(s) attached
+                <div v-if="pendingAttachments.length > 0" class="mb-2 flex flex-wrap gap-1.5">
+                    <span v-for="att in pendingAttachments" :key="att.id" class="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-[10px] font-medium text-blue-700">
+                        {{ att.name }}
+                        <button class="ml-0.5 text-blue-400 hover:text-red-500" title="Remove" @click="removePendingAttachment(att.id)">
+                            <X class="h-3 w-3" />
+                        </button>
                     </span>
                 </div>
 
@@ -915,10 +1081,11 @@ onUnmounted(() => {
                     </div>
                     <button
                         class="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-xl bg-[#2563EB] text-white transition hover:bg-[#1d4ed8] active:scale-95 disabled:opacity-40"
-                        :disabled="!messageText.trim() && pendingAttachmentIds.length === 0"
+                        :disabled="(!messageText.trim() && pendingAttachments.length === 0) || uploadingFiles.length > 0 || isSending"
                         @click="sendMessage"
                     >
-                        <Send class="h-4 w-4" />
+                        <Send v-if="!isSending" class="h-4 w-4" />
+                        <Loader v-else class="h-4 w-4 animate-spin" />
                     </button>
                 </div>
                 <input ref="fileInputRef" type="file" class="hidden" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,.csv" @change="handleFileSelected" />
