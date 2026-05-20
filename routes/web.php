@@ -150,6 +150,23 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('projects/members/{member}/tasks', [TaskItemController::class, 'store'])->name('projects.members.tasks.store');
     Route::patch('tasks/{task}', [TaskItemController::class, 'update'])->name('tasks.update');
 
+    // E-DTS Document Tracking
+    Route::get('edts/pending-count', [\App\Http\Controllers\EdtsController::class, 'pendingCount'])->name('edts.pending-count');
+    Route::post('edts/departments', [\App\Http\Controllers\EdtsController::class, 'storeDepartment'])->name('edts.departments.store');
+    Route::put('edts/departments/{department}', [\App\Http\Controllers\EdtsController::class, 'updateDepartment'])->name('edts.departments.update');
+    Route::delete('edts/departments/{department}', [\App\Http\Controllers\EdtsController::class, 'destroyDepartment'])->name('edts.departments.destroy');
+    Route::post('edts/doc-types', [\App\Http\Controllers\EdtsController::class, 'storeDocType'])->name('edts.doc-types.store');
+    Route::put('edts/doc-types/{docType}', [\App\Http\Controllers\EdtsController::class, 'updateDocType'])->name('edts.doc-types.update');
+    Route::delete('edts/doc-types/{docType}', [\App\Http\Controllers\EdtsController::class, 'destroyDocType'])->name('edts.doc-types.destroy');
+    Route::post('edts/admins', [\App\Http\Controllers\EdtsController::class, 'assignAdmin'])->name('edts.admins.assign');
+    Route::delete('edts/admins/{admin}', [\App\Http\Controllers\EdtsController::class, 'removeAdmin'])->name('edts.admins.remove');
+    Route::post('edts/{document}/receive', [\App\Http\Controllers\EdtsController::class, 'receive'])->name('edts.receive');
+    Route::post('edts/{document}/forward', [\App\Http\Controllers\EdtsController::class, 'forward'])->name('edts.forward');
+    Route::get('edts', [\App\Http\Controllers\EdtsController::class, 'index'])->name('edts');
+    Route::post('edts', [\App\Http\Controllers\EdtsController::class, 'store'])->name('edts.store');
+    Route::put('edts/{document}', [\App\Http\Controllers\EdtsController::class, 'update'])->name('edts.update');
+    Route::get('edts/{referenceNumber}', [\App\Http\Controllers\EdtsController::class, 'show'])->name('edts.show')->where('referenceNumber', 'EDTS-.*');
+
     // Broadcasting auth
     Broadcast::routes();
 

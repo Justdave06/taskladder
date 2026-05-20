@@ -108,7 +108,7 @@ function createProject(): void {
 
 function updateProject(): void {
     if (!editingProject.value) {
- return; 
+ return;
 }
 
     router.put(projectsApi.update.url({ project: editingProject.value.id }), form.value, {
@@ -123,7 +123,7 @@ function updateProject(): void {
 
 function deleteProject(): void {
     if (!deletingProject.value) {
- return; 
+ return;
 }
 
     router.delete(projectsApi.destroy.url({ project: deletingProject.value.id }), {
