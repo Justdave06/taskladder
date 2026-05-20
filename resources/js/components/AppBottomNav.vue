@@ -12,6 +12,7 @@ import {
     Users,
     ShieldCheck,
     UserPlus,
+    FileText,
 } from 'lucide-vue-next';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 
@@ -23,21 +24,7 @@ const authUser = page.props.auth.user as { id: number; is_superadmin?: boolean; 
 const isSuperadmin = computed(() => authUser?.is_superadmin ?? false);
 const hasCompany = computed(() => !!authUser?.company_id);
 const pendingConnectCount = ref((page.props.pendingConnectRequests as number) || 0);
-
-let pollInterval: ReturnType<typeof setInterval>;
-onMounted(() => {
-    if (!authUser?.company_id) return;
-    pollInterval = setInterval(async () => {
-        try {
-            const res = await fetch('/connect/pending-count');
-            const data = await res.json();
-            pendingConnectCount.value = data.count || 0;
-        } catch {}
-    }, 5000);
-});
-onUnmounted(() => {
-    if (pollInterval) clearInterval(pollInterval);
-});
+const edtsPendingCount = ref(0);
 
 const baseNavItems: NavItem[] = [
     { label: 'Bulletin', href: '/bulletin', icon: MessageSquareText },
@@ -53,7 +40,7 @@ const baseNavItems: NavItem[] = [
 const regularNavItems = computed(() => {
     const items = [...baseNavItems];
     if (hasCompany.value) {
-        items.splice(items.findIndex(i => i.label === 'Me') + 1, 0, { label: 'Connect', href: '/connect', icon: UserPlus });
+        items.splice(items.findIndex(i => i.label === 'Me'), 0, { label: 'Connect', href: '/connect', icon: UserPlus });
     }
     return items;
 });
@@ -65,6 +52,7 @@ const superadminNavItems: NavItem[] = [
     { label: 'Roles', href: '/admin/roles', icon: ShieldCheck },
     { label: 'Messages', href: '/messages', icon: MessageSquareText },
     { label: 'Notifications', href: '/notifications', icon: Bell },
+    { label: 'Me', href: '/settings/profile', icon: User },
 ];
 
 const navItems = computed(() => isSuperadmin.value ? superadminNavItems : regularNavItems.value);
@@ -73,29 +61,72 @@ function isActive(item: NavItem): boolean {
     if (item.exact) return currentUrl.value === item.href;
     return currentUrl.value === item.href || currentUrl.value.startsWith(item.href + '/');
 }
+
+let connectPollInterval: ReturnType<typeof setInterval>;
+let edtsPollInterval: ReturnType<typeof setInterval>;
+onMounted(() => {
+    if (authUser?.company_id) {
+        connectPollInterval = setInterval(async () => {
+            try {
+                const res = await fetch('/connect/pending-count');
+                const data = await res.json();
+                pendingConnectCount.value = data.count || 0;
+            } catch {}
+        }, 5000);
+    }
+    edtsPollInterval = setInterval(async () => {
+        try {
+            const res = await fetch('/edts/pending-count');
+            const data = await res.json();
+            edtsPendingCount.value = data.count || 0;
+        } catch {}
+    }, 10000);
+});
+onUnmounted(() => {
+    if (connectPollInterval) clearInterval(connectPollInterval);
+    if (edtsPollInterval) clearInterval(edtsPollInterval);
+});
 </script>
 
 <template>
-    <nav class="fixed bottom-6 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-[560px] -translate-x-1/2 items-center justify-around rounded-2xl border border-white/20 bg-white/90 px-2 py-2 shadow-xl backdrop-blur-xl dark:bg-gray-900/90">
+    <div class="fixed bottom-6 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-[600px] -translate-x-1/2 items-center rounded-2xl border border-white/20 bg-white/90 px-2 py-2 shadow-xl backdrop-blur-xl dark:bg-gray-900/90">
+        <nav class="flex flex-1 items-center justify-around">
+            <Link
+                v-for="item in navItems"
+                :key="item.label"
+                :href="item.href"
+                class="group relative flex flex-col items-center gap-0.5 px-1.5 py-1 text-[10px] transition-all duration-300"
+                :class="isActive(item)
+                    ? 'font-semibold text-blue-600 dark:text-blue-400'
+                    : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'"
+            >
+                <span class="relative transition-transform duration-300 group-hover:-translate-y-1.5 group-hover:scale-110">
+                    <component :is="item.icon" class="h-5 w-5" :class="isActive(item) ? 'text-blue-600 dark:text-blue-400' : ''" />
+                    <span v-if="item.label === 'Notifications' && unreadCount > 0" class="absolute -right-1.5 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[8px] font-bold text-white">
+                        {{ unreadCount > 99 ? '99+' : unreadCount }}
+                    </span>
+                    <span v-if="item.label === 'Connect' && pendingConnectCount > 0" class="absolute -right-1.5 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[8px] font-bold text-white">
+                        {{ pendingConnectCount > 99 ? '99+' : pendingConnectCount }}
+                    </span>
+                </span>
+                <span>{{ item.label }}</span>
+            </Link>
+        </nav>
+
         <Link
-            v-for="item in navItems"
-            :key="item.label"
-            :href="item.href"
+            href="/edts"
             class="group relative flex flex-col items-center gap-0.5 px-1.5 py-1 text-[10px] transition-all duration-300"
-            :class="isActive(item)
+            :class="currentUrl === '/edts' || currentUrl.startsWith('/edts/')
                 ? 'font-semibold text-blue-600 dark:text-blue-400'
                 : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'"
         >
             <span class="relative transition-transform duration-300 group-hover:-translate-y-1.5 group-hover:scale-110">
-                <component :is="item.icon" class="h-5 w-5" :class="isActive(item) ? 'text-blue-600 dark:text-blue-400' : ''" />
-                <span v-if="item.label === 'Notifications' && unreadCount > 0" class="absolute -right-1.5 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[8px] font-bold text-white">
-                    {{ unreadCount > 99 ? '99+' : unreadCount }}
-                </span>
-                <span v-if="item.label === 'Connect' && pendingConnectCount > 0" class="absolute -right-1.5 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[8px] font-bold text-white">
-                    {{ pendingConnectCount > 99 ? '99+' : pendingConnectCount }}
+                <FileText class="h-5 w-5" :class="currentUrl === '/edts' || currentUrl.startsWith('/edts/') ? 'text-blue-600 dark:text-blue-400' : ''" />
+                <span v-if="edtsPendingCount > 0" class="absolute -right-1.5 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[8px] font-bold text-white">
+                    {{ edtsPendingCount > 99 ? '99+' : edtsPendingCount }}
                 </span>
             </span>
-            <span>{{ item.label }}</span>
+            <span>EDTS</span>
         </Link>
-    </nav>
+    </div>
 </template>

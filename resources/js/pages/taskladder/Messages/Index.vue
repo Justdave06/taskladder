@@ -433,6 +433,7 @@ function sendMessage() {
         if (uploadingFiles.value.length > 0) return;
 
         const text = messageText.value.trim();
+        messageText.value = '';
 
         if (!text && pendingAttachments.value.length === 0) {
             return;

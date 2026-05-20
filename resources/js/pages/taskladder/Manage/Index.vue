@@ -10,7 +10,7 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
-import {
+import {        
     Dialog,
     DialogContent,
     DialogHeader,
@@ -105,7 +105,7 @@ return;
     router.post(manage.roles.store.url(), { name: newRoleName.value }, {
         preserveScroll: true,
         onSuccess: () => {
- newRoleName.value = ''; addingRoleForProject.value = null; 
+ newRoleName.value = ''; addingRoleForProject.value = null;
 },
     });
 }
@@ -126,7 +126,7 @@ function assignMemberRole(memberId: number, roleId: string) {
 
 function createProject() {
     if (!projectForm.value.title.trim()) {
- return; 
+ return;
 }
 
     router.post(manage.projects.store.url(), projectForm.value, {
@@ -140,7 +140,7 @@ function createProject() {
 
 function deleteProject(id: number) {
     if (!confirm('Delete this project and all its data?')) {
- return; 
+ return;
 }
 
     router.delete(manage.projects.destroy.url({ project: id }), {
@@ -150,7 +150,7 @@ function deleteProject(id: number) {
 
 function createUser() {
     if (!userForm.value.name.trim() || !userForm.value.email.trim() || !userForm.value.password) {
- return; 
+ return;
 }
 
     router.post(manage.users.store.url(), userForm.value, {
@@ -171,7 +171,7 @@ function saveRole(memberId: number, role: string) {
 
 function removeMember(memberId: number) {
     if (!confirm('Remove this member from the project?')) {
- return; 
+ return;
 }
 
     router.delete(manage.members.remove.url({ member: memberId }), {
@@ -213,7 +213,7 @@ return;
 
 function sendInvite() {
     if (!inviteForm.value.project_id || !inviteForm.value.user_id) {
- return; 
+ return;
 }
 
     const payload: Record<string, any> = { project_id: Number(inviteForm.value.project_id), user_id: Number(inviteForm.value.user_id) };
@@ -225,7 +225,7 @@ payload.role_id = Number(inviteForm.value.role_id);
     router.post(team.invite.url(), payload, {
         preserveScroll: true,
         onSuccess: () => {
- showInviteDialog.value = false; 
+ showInviteDialog.value = false;
 },
         onError: (errors) => {
             const msgs = Object.values(errors).join('\n');
